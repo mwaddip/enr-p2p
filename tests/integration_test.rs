@@ -1,7 +1,7 @@
-use ergo_proxy_node::protocol::messages::ProtocolMessage;
-use ergo_proxy_node::protocol::peer::ProtocolEvent;
-use ergo_proxy_node::routing::router::{Action, Router};
-use ergo_proxy_node::types::{Direction, PeerId, ProxyMode};
+use enr_p2p::protocol::messages::ProtocolMessage;
+use enr_p2p::protocol::peer::ProtocolEvent;
+use enr_p2p::routing::router::{Action, Router};
+use enr_p2p::types::{Direction, PeerId, ProxyMode};
 
 #[test]
 fn full_tx_relay_scenario() {

@@ -1,9 +1,9 @@
 //! Verify our handshake parser against the actual JVM node pcap capture.
 //! Also verify our handshake builder produces structurally correct output.
 
-use ergo_proxy_node::transport::handshake::{self, HandshakeConfig};
-use ergo_proxy_node::transport::frame::{self, Frame};
-use ergo_proxy_node::types::{Network, Version, ProxyMode};
+use enr_p2p::transport::handshake::{self, HandshakeConfig};
+use enr_p2p::transport::frame::{self, Frame};
+use enr_p2p::types::{Network, Version, ProxyMode};
 
 /// Raw handshake bytes captured from the JVM Ergo testnet node (v6.0.3)
 /// connecting to 213.239.193.208:9023 on 2026-03-30.

@@ -1,6 +1,6 @@
-use ergo_proxy_node::protocol::messages::{ProtocolMessage, MessageCode};
-use ergo_proxy_node::transport::frame::Frame;
-use ergo_proxy_node::transport::vlq;
+use enr_p2p::protocol::messages::{ProtocolMessage, MessageCode};
+use enr_p2p::transport::frame::Frame;
+use enr_p2p::transport::vlq;
 
 #[test]
 fn parse_inv_message() {
@@ -112,9 +112,9 @@ fn inv_to_frame_roundtrip() {
 
 // --- Peer state machine tests ---
 
-use ergo_proxy_node::protocol::peer::{PeerState, PeerStateMachine, ProtocolEvent};
-use ergo_proxy_node::types::{PeerId, Direction, Version};
-use ergo_proxy_node::transport::handshake::PeerSpec;
+use enr_p2p::protocol::peer::{PeerState, PeerStateMachine, ProtocolEvent};
+use enr_p2p::types::{PeerId, Direction, Version};
+use enr_p2p::transport::handshake::PeerSpec;
 
 #[test]
 fn peer_starts_connecting() {

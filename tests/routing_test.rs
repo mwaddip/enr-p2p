@@ -1,6 +1,6 @@
-use ergo_proxy_node::routing::inv_table::InvTable;
-use ergo_proxy_node::routing::tracker::{RequestTracker, SyncTracker};
-use ergo_proxy_node::types::PeerId;
+use enr_p2p::routing::inv_table::InvTable;
+use enr_p2p::routing::tracker::{RequestTracker, SyncTracker};
+use enr_p2p::types::PeerId;
 
 // --- Inv table tests ---
 
@@ -123,11 +123,11 @@ fn sync_tracker_purge_outbound() {
 
 // --- Router tests ---
 
-use ergo_proxy_node::routing::router::{Router, Action};
-use ergo_proxy_node::routing::validator::{ModifierValidator, ModifierVerdict};
-use ergo_proxy_node::protocol::messages::ProtocolMessage;
-use ergo_proxy_node::protocol::peer::ProtocolEvent;
-use ergo_proxy_node::types::{Direction, ProxyMode};
+use enr_p2p::routing::router::{Router, Action};
+use enr_p2p::routing::validator::{ModifierValidator, ModifierVerdict};
+use enr_p2p::protocol::messages::ProtocolMessage;
+use enr_p2p::protocol::peer::ProtocolEvent;
+use enr_p2p::types::{Direction, ProxyMode};
 
 // --- Validator test helpers ---
 

@@ -1,6 +1,6 @@
 mod common;
 
-use ergo_proxy_node::transport::vlq;
+use enr_p2p::transport::vlq;
 
 #[test]
 fn vlq_encode_zero() {
@@ -90,8 +90,8 @@ fn zigzag_roundtrip() {
 
 // --- Frame tests ---
 
-use ergo_proxy_node::transport::frame::{self, Frame};
-use ergo_proxy_node::types::Network;
+use enr_p2p::transport::frame::{self, Frame};
+use enr_p2p::types::Network;
 
 #[test]
 fn frame_encode_decode_roundtrip() {
@@ -149,8 +149,8 @@ fn frame_encode_checksum_is_blake2b256_prefix() {
 
 // --- Handshake tests ---
 
-use ergo_proxy_node::transport::handshake::{self, HandshakeConfig};
-use ergo_proxy_node::types::{Version, ProxyMode};
+use enr_p2p::transport::handshake::{self, HandshakeConfig};
+use enr_p2p::types::{Version, ProxyMode};
 
 #[test]
 fn handshake_build_parse_roundtrip() {
@@ -192,7 +192,7 @@ fn handshake_proxy_feature_present() {
 #[test]
 fn handshake_jvm_node_is_not_proxy() {
     // JVM nodes don't send feature 64
-    let spec = ergo_proxy_node::transport::handshake::PeerSpec {
+    let spec = enr_p2p::transport::handshake::PeerSpec {
         agent: "ergoref".into(),
         version: Version::new(6, 0, 3),
         name: "test".into(),
