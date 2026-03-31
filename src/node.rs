@@ -1,15 +1,14 @@
 //! P2P node entry point.
 //!
-//! The caller provides a config and an optional modifier validator, then calls
+//! The caller provides a config and an optional modifier sink, then calls
 //! `P2pNode::start()`. The P2P layer spawns listeners, outbound connections,
 //! and the event loop as background tokio tasks. The returned `P2pNode` is a
-//! handle for observing state — the caller owns the tokio runtime.
+//! handle for observing and controlling state — the caller owns the tokio runtime.
 
 use crate::config::Config;
 use crate::protocol::messages::ProtocolMessage;
 use crate::protocol::peer::ProtocolEvent;
 use crate::routing::router::{Action, Router};
-use crate::routing::validator::ModifierValidator;
 use crate::routing::latency::LatencyStats;
 use crate::transport::connection::Connection;
 use crate::transport::frame::Frame;
@@ -70,7 +69,7 @@ impl P2pNode {
     /// - **Postcondition**: Background tasks are spawned and running.
     pub async fn start(
         config: Config,
-        validator: Option<Box<dyn ModifierValidator>>,
+        modifier_sink: Option<mpsc::Sender<(u8, [u8; 32], Vec<u8>)>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let (ver_major, ver_minor, ver_patch) = config.version_bytes()?;
         let version = Version::new(ver_major, ver_minor, ver_patch);
@@ -85,10 +84,6 @@ impl P2pNode {
         let peer_counter = Arc::new(std::sync::atomic::AtomicU64::new(1));
         let subscriber: Arc<Mutex<Option<mpsc::Sender<ProtocolEvent>>>> =
             Arc::new(Mutex::new(None));
-
-        if let Some(v) = validator {
-            router.lock().await.set_validator(v);
-        }
 
         // Start listeners
         if let Some(ref listener_cfg) = config.listen.ipv6 {
@@ -147,7 +142,7 @@ impl P2pNode {
             let peer_senders = peer_senders.clone();
             let subscriber = subscriber.clone();
             tokio::spawn(async move {
-                event_loop(event_rx, router, peer_senders, subscriber).await;
+                event_loop(event_rx, router, peer_senders, subscriber, modifier_sink).await;
             });
         }
 
@@ -221,6 +216,7 @@ async fn event_loop(
     router: Arc<Mutex<Router>>,
     peer_senders: Arc<Mutex<HashMap<PeerId, PeerSender>>>,
     subscriber: Arc<Mutex<Option<mpsc::Sender<ProtocolEvent>>>>,
+    modifier_sink: Option<mpsc::Sender<(u8, [u8; 32], Vec<u8>)>>,
 ) {
     loop {
         match event_rx.recv().await {
@@ -243,6 +239,11 @@ async fn event_loop(
                                 if tx.send(frame).await.is_err() {
                                     tracing::warn!(peer = %target, "Failed to send to peer");
                                 }
+                            }
+                        }
+                        Action::Validate { modifier_type, id, data } => {
+                            if let Some(ref sink) = modifier_sink {
+                                let _ = sink.try_send((modifier_type, id, data));
                             }
                         }
                     }
@@ -620,7 +621,7 @@ mod tests {
         let ps = peer_senders.clone();
         let sub = subscriber.clone();
         let handle = tokio::spawn(async move {
-            event_loop(event_rx, r, ps, sub).await;
+            event_loop(event_rx, r, ps, sub, None).await;
         });
 
         // Register a peer so the router doesn't choke

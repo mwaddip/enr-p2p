@@ -13,16 +13,21 @@ use crate::protocol::peer::ProtocolEvent;
 use crate::routing::inv_table::InvTable;
 use crate::routing::latency::{LatencyTracker, LatencyStats};
 use crate::routing::tracker::{RequestTracker, SyncTracker};
-use crate::routing::validator::{ModifierValidator, ModifierVerdict};
 use crate::types::{Direction, PeerId, ProxyMode};
 use std::collections::HashMap;
 
-/// A routing directive: send a message to a specific peer.
+/// A routing directive.
 #[derive(Debug)]
 pub enum Action {
     Send {
         target: PeerId,
         message: ProtocolMessage,
+    },
+    /// Forward modifier data to the async validation pipeline.
+    Validate {
+        modifier_type: u8,
+        id: [u8; 32],
+        data: Vec<u8>,
     },
 }
 
@@ -37,7 +42,6 @@ pub struct Router {
     request_tracker: RequestTracker,
     sync_tracker: SyncTracker,
     latency_tracker: LatencyTracker,
-    validator: Option<Box<dyn ModifierValidator>>,
 }
 
 impl Router {
@@ -48,14 +52,7 @@ impl Router {
             request_tracker: RequestTracker::new(),
             sync_tracker: SyncTracker::new(),
             latency_tracker: LatencyTracker::new(),
-            validator: None,
         }
-    }
-
-    /// Set a modifier validator. The router will call it for each modifier
-    /// in a ModifierResponse before forwarding. Replaces any previously set validator.
-    pub fn set_validator(&mut self, validator: Box<dyn ModifierValidator>) {
-        self.validator = Some(validator);
     }
 
     pub fn register_peer(&mut self, peer_id: PeerId, direction: Direction, mode: ProxyMode) {
@@ -146,11 +143,11 @@ impl Router {
             ProtocolMessage::ModifierResponse { modifier_type, modifiers } => {
                 let mut actions = Vec::new();
                 for (id, data) in &modifiers {
-                    if let Some(ref mut validator) = self.validator {
-                        if validator.validate(modifier_type, id, data) == ModifierVerdict::Reject {
-                            continue;
-                        }
-                    }
+                    actions.push(Action::Validate {
+                        modifier_type,
+                        id: *id,
+                        data: data.clone(),
+                    });
                     self.latency_tracker.record_response(id);
                     if let Some(requester) = self.request_tracker.fulfill(id) {
                         actions.push(Action::Send {

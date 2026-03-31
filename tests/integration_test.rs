@@ -37,8 +37,9 @@ fn full_tx_relay_scenario() {
             modifiers: vec![(tx_id, vec![0xde, 0xad, 0xbe, 0xef])],
         },
     });
-    assert_eq!(actions.len(), 1);
-    assert!(matches!(&actions[0], Action::Send { target, .. } if *target == inbound));
+    assert_eq!(actions.len(), 2); // Validate + Send
+    assert!(actions.iter().any(|a| matches!(a, Action::Validate { .. })));
+    assert!(actions.iter().any(|a| matches!(a, Action::Send { target, .. } if *target == inbound)));
 }
 
 #[test]

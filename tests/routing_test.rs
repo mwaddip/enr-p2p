@@ -124,24 +124,9 @@ fn sync_tracker_purge_outbound() {
 // --- Router tests ---
 
 use enr_p2p::routing::router::{Router, Action};
-use enr_p2p::routing::validator::{ModifierValidator, ModifierVerdict};
 use enr_p2p::protocol::messages::ProtocolMessage;
 use enr_p2p::protocol::peer::ProtocolEvent;
 use enr_p2p::types::{Direction, ProxyMode};
-
-// --- Validator test helpers ---
-
-struct RejectHeaders;
-
-impl ModifierValidator for RejectHeaders {
-    fn validate(&mut self, modifier_type: u8, _id: &[u8; 32], _data: &[u8]) -> ModifierVerdict {
-        if modifier_type == 1 {
-            ModifierVerdict::Reject
-        } else {
-            ModifierVerdict::Accept
-        }
-    }
-}
 
 #[test]
 fn router_inv_from_outbound_forwards_to_inbound() {
@@ -158,6 +143,7 @@ fn router_inv_from_outbound_forwards_to_inbound() {
     let actions = router.handle_event(event);
     let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
         Action::Send { target, .. } => Some(*target),
+        _ => None,
     }).collect();
     assert!(targets.contains(&PeerId(2)));
     assert!(targets.contains(&PeerId(3)));
@@ -182,6 +168,7 @@ fn router_modifier_request_routes_via_inv_table() {
 
     let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
         Action::Send { target, .. } => Some(*target),
+        _ => None,
     }).collect();
     assert_eq!(targets, vec![PeerId(1)]);
 }
@@ -211,6 +198,7 @@ fn router_modifier_response_routes_to_requester() {
 
     let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
         Action::Send { target, .. } => Some(*target),
+        _ => None,
     }).collect();
     assert_eq!(targets, vec![PeerId(2)]);
 }
@@ -279,16 +267,15 @@ fn router_peer_disconnect_purges_state() {
     assert!(actions.is_empty());
 }
 
-// --- Modifier validator tests ---
+// --- Action::Validate tests ---
 
 #[test]
-fn router_validator_rejects_header_modifiers() {
+fn modifier_response_emits_validate_action() {
     let mut router = Router::new();
-    router.set_validator(Box::new(RejectHeaders));
     router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
     router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
 
-    // Inv + Request setup for a header (type 1)
+    // Peer 2 requests via inv route
     router.handle_event(ProtocolEvent::Message {
         peer_id: PeerId(1),
         message: ProtocolMessage::Inv { modifier_type: 1, ids: vec![[0xaa; 32]] },
@@ -298,7 +285,7 @@ fn router_validator_rejects_header_modifiers() {
         message: ProtocolMessage::ModifierRequest { modifier_type: 1, ids: vec![[0xaa; 32]] },
     });
 
-    // Response arrives — validator should reject it
+    // Response arrives
     let actions = router.handle_event(ProtocolEvent::Message {
         peer_id: PeerId(1),
         message: ProtocolMessage::ModifierResponse {
@@ -307,161 +294,11 @@ fn router_validator_rejects_header_modifiers() {
         },
     });
 
-    assert!(actions.is_empty(), "rejected header should produce no actions");
-}
-
-struct AcceptAll;
-
-impl ModifierValidator for AcceptAll {
-    fn validate(&mut self, _: u8, _: &[u8; 32], _: &[u8]) -> ModifierVerdict {
-        ModifierVerdict::Accept
-    }
-}
-
-#[test]
-fn router_validator_accept_all_matches_no_validator() {
-    let mut router = Router::new();
-    router.set_validator(Box::new(AcceptAll));
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
-
-    router.handle_event(ProtocolEvent::Message {
-        peer_id: PeerId(1),
-        message: ProtocolMessage::Inv { modifier_type: 2, ids: vec![[0xaa; 32]] },
-    });
-    router.handle_event(ProtocolEvent::Message {
-        peer_id: PeerId(2),
-        message: ProtocolMessage::ModifierRequest { modifier_type: 2, ids: vec![[0xaa; 32]] },
-    });
-
-    let actions = router.handle_event(ProtocolEvent::Message {
-        peer_id: PeerId(1),
-        message: ProtocolMessage::ModifierResponse {
-            modifier_type: 2,
-            modifiers: vec![([0xaa; 32], vec![1, 2, 3])],
-        },
-    });
-
-    let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
-        Action::Send { target, .. } => Some(*target),
-    }).collect();
-    assert_eq!(targets, vec![PeerId(2)]);
-}
-
-struct RejectById {
-    rejected: [u8; 32],
-}
-
-impl ModifierValidator for RejectById {
-    fn validate(&mut self, _: u8, id: &[u8; 32], _: &[u8]) -> ModifierVerdict {
-        if id == &self.rejected {
-            ModifierVerdict::Reject
-        } else {
-            ModifierVerdict::Accept
-        }
-    }
-}
-
-#[test]
-fn router_validator_partial_rejection() {
-    let mut router = Router::new();
-    router.set_validator(Box::new(RejectById { rejected: [0xbb; 32] }));
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
-
-    // Announce and request three modifiers
-    let ids = vec![[0xaa; 32], [0xbb; 32], [0xcc; 32]];
-    router.handle_event(ProtocolEvent::Message {
-        peer_id: PeerId(1),
-        message: ProtocolMessage::Inv { modifier_type: 1, ids: ids.clone() },
-    });
-    router.handle_event(ProtocolEvent::Message {
-        peer_id: PeerId(2),
-        message: ProtocolMessage::ModifierRequest { modifier_type: 1, ids: ids.clone() },
-    });
-
-    // Response with all three — 0xbb should be rejected
-    let actions = router.handle_event(ProtocolEvent::Message {
-        peer_id: PeerId(1),
-        message: ProtocolMessage::ModifierResponse {
-            modifier_type: 1,
-            modifiers: vec![
-                ([0xaa; 32], vec![1]),
-                ([0xbb; 32], vec![2]),
-                ([0xcc; 32], vec![3]),
-            ],
-        },
-    });
-
-    assert_eq!(actions.len(), 2, "rejected modifier should be dropped, others forwarded");
-
-    let forwarded_ids: Vec<[u8; 32]> = actions.iter().filter_map(|a| match a {
-        Action::Send { message: ProtocolMessage::ModifierResponse { modifiers, .. }, .. } => {
-            Some(modifiers[0].0)
-        }
-        _ => None,
-    }).collect();
-    assert!(forwarded_ids.contains(&[0xaa; 32]));
-    assert!(!forwarded_ids.contains(&[0xbb; 32]));
-    assert!(forwarded_ids.contains(&[0xcc; 32]));
-}
-
-struct RejectAll;
-
-impl ModifierValidator for RejectAll {
-    fn validate(&mut self, _: u8, _: &[u8; 32], _: &[u8]) -> ModifierVerdict {
-        ModifierVerdict::Reject
-    }
-}
-
-#[test]
-fn router_rejected_modifier_skips_trackers() {
-    let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
-
-    // Setup: inv + request
-    router.handle_event(ProtocolEvent::Message {
-        peer_id: PeerId(1),
-        message: ProtocolMessage::Inv { modifier_type: 1, ids: vec![[0xaa; 32]] },
-    });
-    router.handle_event(ProtocolEvent::Message {
-        peer_id: PeerId(2),
-        message: ProtocolMessage::ModifierRequest { modifier_type: 1, ids: vec![[0xaa; 32]] },
-    });
-
-    // Phase 1: reject the response
-    router.set_validator(Box::new(RejectAll));
-    let actions = router.handle_event(ProtocolEvent::Message {
-        peer_id: PeerId(1),
-        message: ProtocolMessage::ModifierResponse {
-            modifier_type: 1,
-            modifiers: vec![([0xaa; 32], vec![1, 2, 3])],
-        },
-    });
-    assert!(actions.is_empty(), "rejected response should produce no actions");
-
-    // Latency tracker should have no stats — rejected response was not recorded
-    assert!(router.latency_stats().is_none(), "rejected response should not update latency tracker");
-
-    // Phase 2: accept the same modifier (proves request tracker wasn't fulfilled)
-    router.set_validator(Box::new(AcceptAll));
-    let actions = router.handle_event(ProtocolEvent::Message {
-        peer_id: PeerId(1),
-        message: ProtocolMessage::ModifierResponse {
-            modifier_type: 1,
-            modifiers: vec![([0xaa; 32], vec![1, 2, 3])],
-        },
-    });
-
-    // The request tracker should still have the pending entry — now fulfilled
-    let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
-        Action::Send { target, .. } => Some(*target),
-    }).collect();
-    assert_eq!(targets, vec![PeerId(2)], "request tracker should still have pending entry after rejection");
-
-    // Now latency tracker should have stats from the accepted response
-    assert!(router.latency_stats().is_some(), "accepted response should update latency tracker");
+    // Should have both Validate and Send
+    let has_validate = actions.iter().any(|a| matches!(a, Action::Validate { .. }));
+    let has_send = actions.iter().any(|a| matches!(a, Action::Send { .. }));
+    assert!(has_validate, "should emit Action::Validate");
+    assert!(has_send, "should emit Action::Send to requester");
 }
 
 // --- ModifierRequest fallback routing tests ---
@@ -481,6 +318,7 @@ fn router_modifier_request_no_inv_falls_back_to_outbound() {
     // Should fall back to outbound peer 1
     let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
         Action::Send { target, .. } => Some(*target),
+        _ => None,
     }).collect();
     assert_eq!(targets, vec![PeerId(1)]);
 }
@@ -521,6 +359,7 @@ fn router_modifier_request_with_inv_ignores_fallback() {
 
     let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
         Action::Send { target, .. } => Some(*target),
+        _ => None,
     }).collect();
     assert_eq!(targets, vec![PeerId(2)], "inv table target should be used, not fallback");
 }
@@ -548,6 +387,7 @@ fn router_fallback_request_response_reaches_requester() {
 
     let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
         Action::Send { target, .. } => Some(*target),
+        _ => None,
     }).collect();
     assert_eq!(targets, vec![PeerId(2)], "response should route back to original requester");
 }
