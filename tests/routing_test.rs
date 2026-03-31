@@ -347,3 +347,61 @@ fn router_validator_accept_all_matches_no_validator() {
     }).collect();
     assert_eq!(targets, vec![PeerId(2)]);
 }
+
+struct RejectById {
+    rejected: [u8; 32],
+}
+
+impl ModifierValidator for RejectById {
+    fn validate(&mut self, _: u8, id: &[u8; 32], _: &[u8]) -> ModifierVerdict {
+        if id == &self.rejected {
+            ModifierVerdict::Reject
+        } else {
+            ModifierVerdict::Accept
+        }
+    }
+}
+
+#[test]
+fn router_validator_partial_rejection() {
+    let mut router = Router::new();
+    router.set_validator(Box::new(RejectById { rejected: [0xbb; 32] }));
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+
+    // Announce and request three modifiers
+    let ids = vec![[0xaa; 32], [0xbb; 32], [0xcc; 32]];
+    router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::Inv { modifier_type: 1, ids: ids.clone() },
+    });
+    router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(2),
+        message: ProtocolMessage::ModifierRequest { modifier_type: 1, ids: ids.clone() },
+    });
+
+    // Response with all three — 0xbb should be rejected
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::ModifierResponse {
+            modifier_type: 1,
+            modifiers: vec![
+                ([0xaa; 32], vec![1]),
+                ([0xbb; 32], vec![2]),
+                ([0xcc; 32], vec![3]),
+            ],
+        },
+    });
+
+    assert_eq!(actions.len(), 2, "rejected modifier should be dropped, others forwarded");
+
+    let forwarded_ids: Vec<[u8; 32]> = actions.iter().filter_map(|a| match a {
+        Action::Send { message: ProtocolMessage::ModifierResponse { modifiers, .. }, .. } => {
+            Some(modifiers[0].0)
+        }
+        _ => None,
+    }).collect();
+    assert!(forwarded_ids.contains(&[0xaa; 32]));
+    assert!(!forwarded_ids.contains(&[0xbb; 32]));
+    assert!(forwarded_ids.contains(&[0xcc; 32]));
+}
