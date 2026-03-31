@@ -484,3 +484,70 @@ fn router_modifier_request_no_inv_falls_back_to_outbound() {
     }).collect();
     assert_eq!(targets, vec![PeerId(1)]);
 }
+
+#[test]
+fn router_modifier_request_no_inv_no_outbound_drops() {
+    let mut router = Router::new();
+    router.register_peer(PeerId(1), Direction::Inbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+
+    // No outbound peers at all, no inv entry
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::ModifierRequest { modifier_type: 1, ids: vec![[0xaa; 32]] },
+    });
+
+    assert!(actions.is_empty(), "no outbound peers means no fallback target");
+}
+
+#[test]
+fn router_modifier_request_with_inv_ignores_fallback() {
+    let mut router = Router::new();
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(3), Direction::Inbound, ProxyMode::Full);
+
+    // Peer 2 announces, so inv table maps to peer 2
+    router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(2),
+        message: ProtocolMessage::Inv { modifier_type: 1, ids: vec![[0xaa; 32]] },
+    });
+
+    // Peer 3 requests — should route to peer 2 (inv hit), not peer 1 (fallback)
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(3),
+        message: ProtocolMessage::ModifierRequest { modifier_type: 1, ids: vec![[0xaa; 32]] },
+    });
+
+    let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
+        Action::Send { target, .. } => Some(*target),
+    }).collect();
+    assert_eq!(targets, vec![PeerId(2)], "inv table target should be used, not fallback");
+}
+
+#[test]
+fn router_fallback_request_response_reaches_requester() {
+    let mut router = Router::new();
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+
+    // No inv — fallback routes request to peer 1
+    router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(2),
+        message: ProtocolMessage::ModifierRequest { modifier_type: 1, ids: vec![[0xaa; 32]] },
+    });
+
+    // Peer 1 responds — should route back to peer 2 (the original requester)
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::ModifierResponse {
+            modifier_type: 1,
+            modifiers: vec![([0xaa; 32], vec![1, 2, 3])],
+        },
+    });
+
+    let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
+        Action::Send { target, .. } => Some(*target),
+    }).collect();
+    assert_eq!(targets, vec![PeerId(2)], "response should route back to original requester");
+}
