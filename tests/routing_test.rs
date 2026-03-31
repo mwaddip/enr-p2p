@@ -309,3 +309,41 @@ fn router_validator_rejects_header_modifiers() {
 
     assert!(actions.is_empty(), "rejected header should produce no actions");
 }
+
+struct AcceptAll;
+
+impl ModifierValidator for AcceptAll {
+    fn validate(&mut self, _: u8, _: &[u8; 32], _: &[u8]) -> ModifierVerdict {
+        ModifierVerdict::Accept
+    }
+}
+
+#[test]
+fn router_validator_accept_all_matches_no_validator() {
+    let mut router = Router::new();
+    router.set_validator(Box::new(AcceptAll));
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+
+    router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::Inv { modifier_type: 2, ids: vec![[0xaa; 32]] },
+    });
+    router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(2),
+        message: ProtocolMessage::ModifierRequest { modifier_type: 2, ids: vec![[0xaa; 32]] },
+    });
+
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::ModifierResponse {
+            modifier_type: 2,
+            modifiers: vec![([0xaa; 32], vec![1, 2, 3])],
+        },
+    });
+
+    let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
+        Action::Send { target, .. } => Some(*target),
+    }).collect();
+    assert_eq!(targets, vec![PeerId(2)]);
+}
