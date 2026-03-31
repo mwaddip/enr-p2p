@@ -137,6 +137,11 @@ impl Router {
             ProtocolMessage::ModifierResponse { modifier_type, modifiers } => {
                 let mut actions = Vec::new();
                 for (id, data) in &modifiers {
+                    if let Some(ref mut validator) = self.validator {
+                        if validator.validate(modifier_type, id, data) == ModifierVerdict::Reject {
+                            continue;
+                        }
+                    }
                     self.latency_tracker.record_response(id);
                     if let Some(requester) = self.request_tracker.fulfill(id) {
                         actions.push(Action::Send {

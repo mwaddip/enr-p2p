@@ -124,9 +124,24 @@ fn sync_tracker_purge_outbound() {
 // --- Router tests ---
 
 use ergo_proxy_node::routing::router::{Router, Action};
+use ergo_proxy_node::routing::validator::{ModifierValidator, ModifierVerdict};
 use ergo_proxy_node::protocol::messages::ProtocolMessage;
 use ergo_proxy_node::protocol::peer::ProtocolEvent;
 use ergo_proxy_node::types::{Direction, ProxyMode};
+
+// --- Validator test helpers ---
+
+struct RejectHeaders;
+
+impl ModifierValidator for RejectHeaders {
+    fn validate(&mut self, modifier_type: u8, _id: &[u8; 32], _data: &[u8]) -> ModifierVerdict {
+        if modifier_type == 1 {
+            ModifierVerdict::Reject
+        } else {
+            ModifierVerdict::Accept
+        }
+    }
+}
 
 #[test]
 fn router_inv_from_outbound_forwards_to_inbound() {
@@ -262,4 +277,35 @@ fn router_peer_disconnect_purges_state() {
         message: ProtocolMessage::ModifierRequest { modifier_type: 2, ids: vec![[0xaa; 32]] },
     });
     assert!(actions.is_empty());
+}
+
+// --- Modifier validator tests ---
+
+#[test]
+fn router_validator_rejects_header_modifiers() {
+    let mut router = Router::new();
+    router.set_validator(Box::new(RejectHeaders));
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+
+    // Inv + Request setup for a header (type 1)
+    router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::Inv { modifier_type: 1, ids: vec![[0xaa; 32]] },
+    });
+    router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(2),
+        message: ProtocolMessage::ModifierRequest { modifier_type: 1, ids: vec![[0xaa; 32]] },
+    });
+
+    // Response arrives — validator should reject it
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::ModifierResponse {
+            modifier_type: 1,
+            modifiers: vec![([0xaa; 32], vec![1, 2, 3])],
+        },
+    });
+
+    assert!(actions.is_empty(), "rejected header should produce no actions");
 }
