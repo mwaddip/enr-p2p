@@ -66,7 +66,16 @@ impl P2pNode {
             router.lock().await.set_validator(v);
         }
 
-        // Listeners, outbound manager, keepalive, event loop — added in next tasks.
+        // Listeners, outbound manager, keepalive — added in next tasks.
+
+        // Event loop: process protocol events through the router
+        {
+            let router = router.clone();
+            let peer_senders = peer_senders.clone();
+            tokio::spawn(async move {
+                event_loop(event_rx, router, peer_senders).await;
+            });
+        }
 
         Ok(P2pNode { router })
     }
@@ -89,5 +98,36 @@ impl P2pNode {
     /// Aggregate latency statistics across all tracked peers.
     pub async fn latency_stats(&self) -> Option<LatencyStats> {
         self.router.lock().await.latency_stats()
+    }
+}
+
+async fn event_loop(
+    mut event_rx: mpsc::Receiver<ProtocolEvent>,
+    router: Arc<Mutex<Router>>,
+    peer_senders: Arc<Mutex<HashMap<PeerId, PeerSender>>>,
+) {
+    loop {
+        match event_rx.recv().await {
+            Some(event) => {
+                let actions = router.lock().await.handle_event(event);
+                let senders = peer_senders.lock().await;
+                for action in actions {
+                    match action {
+                        Action::Send { target, message } => {
+                            if let Some(tx) = senders.get(&target) {
+                                let frame = message.to_frame();
+                                if tx.send(frame).await.is_err() {
+                                    tracing::warn!(peer = %target, "Failed to send to peer");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            None => {
+                tracing::info!("All event senders dropped, event loop exiting");
+                break;
+            }
+        }
     }
 }
