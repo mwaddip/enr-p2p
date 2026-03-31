@@ -131,3 +131,84 @@ async fn event_loop(
         }
     }
 }
+
+async fn run_peer(
+    peer_id: PeerId,
+    conn: Connection,
+    direction: Direction,
+    mode: ProxyMode,
+    event_tx: mpsc::Sender<ProtocolEvent>,
+    peer_senders: Arc<Mutex<HashMap<PeerId, PeerSender>>>,
+    router: Arc<Mutex<Router>>,
+) {
+    let spec = conn.peer_spec().clone();
+    tracing::info!(
+        peer = %peer_id,
+        name = %spec.name,
+        agent = %spec.agent,
+        version = %spec.version,
+        direction = ?direction,
+        "Peer active"
+    );
+
+    // Register peer in router
+    router.lock().await.register_peer(peer_id, direction, mode);
+
+    // Send PeerConnected event
+    let _ = event_tx.send(ProtocolEvent::PeerConnected {
+        peer_id,
+        spec: spec.clone(),
+        direction,
+    }).await;
+
+    // Split connection for concurrent read/write
+    let (mut reader, mut writer, magic, _) = conn.split();
+
+    // Create write channel
+    let (write_tx, mut write_rx) = mpsc::channel::<Frame>(64);
+    peer_senders.lock().await.insert(peer_id, write_tx);
+
+    // Writer task
+    let write_handle = tokio::spawn(async move {
+        while let Some(frame) = write_rx.recv().await {
+            if let Err(e) = crate::transport::frame::write_frame(&mut writer, &magic, &frame).await {
+                tracing::warn!(peer = %peer_id, error = %e, "Write failed");
+                break;
+            }
+        }
+    });
+
+    // Reader loop
+    loop {
+        match crate::transport::frame::read_frame(&mut reader, &magic).await {
+            Ok(frame) => {
+                match ProtocolMessage::from_frame(&frame) {
+                    Ok(msg) => {
+                        let event = ProtocolEvent::Message { peer_id, message: msg };
+                        if event_tx.send(event).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(peer = %peer_id, error = %e, "Message parse failed");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::info!(peer = %peer_id, error = %e, "Connection lost");
+                break;
+            }
+        }
+    }
+
+    // Cleanup
+    peer_senders.lock().await.remove(&peer_id);
+    write_handle.abort();
+
+    let _ = event_tx.send(ProtocolEvent::PeerDisconnected {
+        peer_id,
+        reason: "connection closed".into(),
+    }).await;
+
+    tracing::info!(peer = %peer_id, "Peer removed");
+}
