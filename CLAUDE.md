@@ -4,6 +4,10 @@ P2P networking layer for the Ergo Rust node. Handles peer connections, handshake
 
 Started as a message-forwarding proxy. Gradually gaining awareness of what it forwards as validation components (`enr-chain`, etc.) come online. The proxy behavior is the fallback: if we can't validate it, forward it and let someone else decide.
 
+## OVERRIDES (LOAD FIRST)
+
+**Read and internalize `~/projects/OVERRIDES.md` before anything else.** It contains mechanical overrides for code quality, edit safety, and context management that apply across all projects.
+
 ## SETTINGS.md (HIGHEST PRIORITY)
 
 **Read and internalize the main repo's `SETTINGS.md` before any work.** It defines persona, preferences, and behavioral overrides.
