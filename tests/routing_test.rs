@@ -463,3 +463,24 @@ fn router_rejected_modifier_skips_trackers() {
     // Now latency tracker should have stats from the accepted response
     assert!(router.latency_stats().is_some(), "accepted response should update latency tracker");
 }
+
+// --- ModifierRequest fallback routing tests ---
+
+#[test]
+fn router_modifier_request_no_inv_falls_back_to_outbound() {
+    let mut router = Router::new();
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+
+    // No Inv — peer 2 requests a modifier the router has never seen
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(2),
+        message: ProtocolMessage::ModifierRequest { modifier_type: 1, ids: vec![[0xaa; 32]] },
+    });
+
+    // Should fall back to outbound peer 1
+    let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
+        Action::Send { target, .. } => Some(*target),
+    }).collect();
+    assert_eq!(targets, vec![PeerId(1)]);
+}

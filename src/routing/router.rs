@@ -117,18 +117,27 @@ impl Router {
             ProtocolMessage::ModifierRequest { modifier_type, ids } => {
                 let mut actions = Vec::new();
                 for id in &ids {
-                    if let Some(target) = self.inv_table.lookup(id) {
-                        if target != source {
-                            self.request_tracker.record(*id, source);
-                            self.latency_tracker.record_request(*id, target);
-                            actions.push(Action::Send {
-                                target,
-                                message: ProtocolMessage::ModifierRequest {
-                                    modifier_type,
-                                    ids: vec![*id],
-                                },
-                            });
-                        }
+                    let target = if let Some(inv_target) = self.inv_table.lookup(id) {
+                        if inv_target == source { continue; }
+                        Some(inv_target)
+                    } else {
+                        // Fallback: pick any outbound peer that isn't the source.
+                        // Enables chain sync where modifier IDs come from SyncInfo, not Inv.
+                        self.peers.iter()
+                            .find(|(pid, entry)| **pid != source && entry.direction == Direction::Outbound)
+                            .map(|(pid, _)| *pid)
+                    };
+
+                    if let Some(target) = target {
+                        self.request_tracker.record(*id, source);
+                        self.latency_tracker.record_request(*id, target);
+                        actions.push(Action::Send {
+                            target,
+                            message: ProtocolMessage::ModifierRequest {
+                                modifier_type,
+                                ids: vec![*id],
+                            },
+                        });
                     }
                 }
                 actions

@@ -63,11 +63,14 @@ fn disconnect_cleanup_scenario() {
         reason: "gone".into(),
     });
 
+    // Inv entry for out1 was purged on disconnect. With fallback routing,
+    // the request goes to out2 (the remaining outbound peer).
     let actions = router.handle_event(ProtocolEvent::Message {
         peer_id: inb,
         message: ProtocolMessage::ModifierRequest { modifier_type: 2, ids: vec![tx_id] },
     });
-    assert!(actions.is_empty());
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(&actions[0], Action::Send { target, .. } if *target == out2));
 }
 
 #[test]
