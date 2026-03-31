@@ -197,7 +197,7 @@ impl P2pNode {
         let frame = message.to_frame();
         for pid in outbound {
             if let Some(tx) = senders.get(&pid) {
-                let _ = tx.send(frame.clone()).await;
+                let _ = tx.try_send(frame.clone());
             }
         }
     }
@@ -563,6 +563,38 @@ mod tests {
         assert!(rx_b.try_recv().is_ok());
         // Inbound peer should NOT
         assert!(rx_in.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn broadcast_outbound_skips_full_channel() {
+        let (node, router, peer_senders) = test_node();
+
+        let peer_ok = PeerId(1);
+        let peer_full = PeerId(2);
+
+        router.lock().await.register_peer(peer_ok, Direction::Outbound, ProxyMode::Full);
+        router.lock().await.register_peer(peer_full, Direction::Outbound, ProxyMode::Full);
+
+        let (tx_ok, mut rx_ok) = mpsc::channel::<Frame>(64);
+        // Capacity 1: one fill + one broadcast = second is dropped
+        let (tx_full, rx_full) = mpsc::channel::<Frame>(1);
+        {
+            let mut senders = peer_senders.lock().await;
+            senders.insert(peer_ok, tx_ok);
+            senders.insert(peer_full, tx_full);
+        }
+
+        // Fill the small channel
+        node.broadcast_outbound(ProtocolMessage::GetPeers).await;
+        // Channel is now at capacity — second broadcast should skip it, not block
+        node.broadcast_outbound(ProtocolMessage::GetPeers).await;
+
+        // Healthy peer got both
+        assert!(rx_ok.try_recv().is_ok());
+        assert!(rx_ok.try_recv().is_ok());
+
+        // Full peer got only the first (second was dropped, not blocked)
+        drop(rx_full);
     }
 
     #[tokio::test]
