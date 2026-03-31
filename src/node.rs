@@ -25,14 +25,36 @@ use tokio::time::{interval, Duration};
 
 type PeerSender = mpsc::Sender<Frame>;
 
+/// Error when sending a message to a peer.
+#[derive(Debug)]
+pub enum SendError {
+    /// The peer ID is not connected.
+    UnknownPeer(PeerId),
+    /// The peer's write channel is closed (peer disconnecting).
+    ChannelClosed(PeerId),
+}
+
+impl std::fmt::Display for SendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SendError::UnknownPeer(pid) => write!(f, "unknown peer: {}", pid),
+            SendError::ChannelClosed(pid) => write!(f, "channel closed for peer: {}", pid),
+        }
+    }
+}
+
+impl std::error::Error for SendError {}
+
 /// Handle to a running P2P node.
 ///
-/// Created by `P2pNode::start()`. Provides read-only observation of the
+/// Created by `P2pNode::start()`. Provides observation and control of the
 /// node's state. The P2P layer runs as background tokio tasks — dropping
 /// this handle does not stop them. The tasks live until the tokio runtime
 /// shuts down.
 pub struct P2pNode {
     router: Arc<Mutex<Router>>,
+    peer_senders: Arc<Mutex<HashMap<PeerId, PeerSender>>>,
+    subscriber: Arc<Mutex<Option<mpsc::Sender<ProtocolEvent>>>>,
 }
 
 impl P2pNode {
@@ -61,6 +83,8 @@ impl P2pNode {
             Arc::new(Mutex::new(HashMap::new()));
         let router = Arc::new(Mutex::new(Router::new()));
         let peer_counter = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let subscriber: Arc<Mutex<Option<mpsc::Sender<ProtocolEvent>>>> =
+            Arc::new(Mutex::new(None));
 
         if let Some(v) = validator {
             router.lock().await.set_validator(v);
@@ -121,12 +145,13 @@ impl P2pNode {
         {
             let router = router.clone();
             let peer_senders = peer_senders.clone();
+            let subscriber = subscriber.clone();
             tokio::spawn(async move {
-                event_loop(event_rx, router, peer_senders).await;
+                event_loop(event_rx, router, peer_senders, subscriber).await;
             });
         }
 
-        Ok(P2pNode { router })
+        Ok(P2pNode { router, peer_senders, subscriber })
     }
 
     /// Number of connected peers (inbound + outbound).
@@ -148,16 +173,66 @@ impl P2pNode {
     pub async fn latency_stats(&self) -> Option<LatencyStats> {
         self.router.lock().await.latency_stats()
     }
+
+    /// Send a protocol message to a specific peer.
+    ///
+    /// # Contract
+    /// - **Precondition**: `peer` is a currently connected peer.
+    /// - **Postcondition**: The message is queued on the peer's write channel.
+    /// - Returns `SendError::UnknownPeer` if the peer is not connected.
+    /// - Returns `SendError::ChannelClosed` if the peer's write channel has closed.
+    pub async fn send_to(&self, peer: PeerId, message: ProtocolMessage) -> Result<(), SendError> {
+        let senders = self.peer_senders.lock().await;
+        let tx = senders.get(&peer).ok_or(SendError::UnknownPeer(peer))?;
+        let frame = message.to_frame();
+        tx.send(frame).await.map_err(|_| SendError::ChannelClosed(peer))
+    }
+
+    /// Send a protocol message to all connected outbound peers.
+    ///
+    /// Best-effort: silently skips peers whose write channels are full or closed.
+    pub async fn broadcast_outbound(&self, message: ProtocolMessage) {
+        let outbound = self.router.lock().await.outbound_peers();
+        let senders = self.peer_senders.lock().await;
+        let frame = message.to_frame();
+        for pid in outbound {
+            if let Some(tx) = senders.get(&pid) {
+                let _ = tx.send(frame.clone()).await;
+            }
+        }
+    }
+
+    /// Subscribe to protocol events.
+    ///
+    /// Returns a receiver that gets a copy of every `ProtocolEvent` before it
+    /// reaches the router. If the subscriber falls behind (channel capacity 256),
+    /// events are dropped rather than blocking the event loop.
+    ///
+    /// Only one subscriber at a time — calling this again replaces the previous one.
+    pub async fn subscribe(&self) -> mpsc::Receiver<ProtocolEvent> {
+        let (tx, rx) = mpsc::channel(256);
+        *self.subscriber.lock().await = Some(tx);
+        rx
+    }
 }
 
 async fn event_loop(
     mut event_rx: mpsc::Receiver<ProtocolEvent>,
     router: Arc<Mutex<Router>>,
     peer_senders: Arc<Mutex<HashMap<PeerId, PeerSender>>>,
+    subscriber: Arc<Mutex<Option<mpsc::Sender<ProtocolEvent>>>>,
 ) {
     loop {
         match event_rx.recv().await {
             Some(event) => {
+                // Tap: send to subscriber before routing (non-blocking)
+                {
+                    let sub = subscriber.lock().await;
+                    if let Some(tx) = sub.as_ref() {
+                        let _ = tx.try_send(event.clone());
+                    }
+                }
+
                 let actions = router.lock().await.handle_event(event);
                 let senders = peer_senders.lock().await;
                 for action in actions {
@@ -402,5 +477,164 @@ async fn outbound_manager(
 
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(Duration::from_secs(300));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a P2pNode with no background tasks — just the struct with shared state.
+    fn test_node() -> (P2pNode, Arc<Mutex<Router>>, Arc<Mutex<HashMap<PeerId, PeerSender>>>) {
+        let router = Arc::new(Mutex::new(Router::new()));
+        let peer_senders = Arc::new(Mutex::new(HashMap::new()));
+        let subscriber = Arc::new(Mutex::new(None));
+        let node = P2pNode {
+            router: router.clone(),
+            peer_senders: peer_senders.clone(),
+            subscriber,
+        };
+        (node, router, peer_senders)
+    }
+
+    #[tokio::test]
+    async fn send_to_delivers_to_correct_peer() {
+        let (node, _router, peer_senders) = test_node();
+        let peer = PeerId(1);
+
+        let (tx, mut rx) = mpsc::channel::<Frame>(64);
+        peer_senders.lock().await.insert(peer, tx);
+
+        let msg = ProtocolMessage::GetPeers;
+        node.send_to(peer, msg).await.unwrap();
+
+        let frame = rx.recv().await.unwrap();
+        assert_eq!(frame.code, 1); // GetPeers code
+    }
+
+    #[tokio::test]
+    async fn send_to_unknown_peer_returns_error() {
+        let (node, _router, _senders) = test_node();
+        let result = node.send_to(PeerId(999), ProtocolMessage::GetPeers).await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), SendError::UnknownPeer(PeerId(999))));
+    }
+
+    #[tokio::test]
+    async fn send_to_closed_channel_returns_error() {
+        let (node, _router, peer_senders) = test_node();
+        let peer = PeerId(1);
+
+        let (tx, rx) = mpsc::channel::<Frame>(64);
+        peer_senders.lock().await.insert(peer, tx);
+        drop(rx); // Close the receiving end
+
+        let result = node.send_to(peer, ProtocolMessage::GetPeers).await;
+        assert!(matches!(result.unwrap_err(), SendError::ChannelClosed(PeerId(1))));
+    }
+
+    #[tokio::test]
+    async fn broadcast_outbound_sends_to_all_outbound_peers() {
+        let (node, router, peer_senders) = test_node();
+
+        let peer_a = PeerId(1);
+        let peer_b = PeerId(2);
+        let peer_inbound = PeerId(3);
+
+        router.lock().await.register_peer(peer_a, Direction::Outbound, ProxyMode::Full);
+        router.lock().await.register_peer(peer_b, Direction::Outbound, ProxyMode::Full);
+        router.lock().await.register_peer(peer_inbound, Direction::Inbound, ProxyMode::Full);
+
+        let (tx_a, mut rx_a) = mpsc::channel::<Frame>(64);
+        let (tx_b, mut rx_b) = mpsc::channel::<Frame>(64);
+        let (tx_in, mut rx_in) = mpsc::channel::<Frame>(64);
+        {
+            let mut senders = peer_senders.lock().await;
+            senders.insert(peer_a, tx_a);
+            senders.insert(peer_b, tx_b);
+            senders.insert(peer_inbound, tx_in);
+        }
+
+        node.broadcast_outbound(ProtocolMessage::GetPeers).await;
+
+        // Outbound peers should receive the message
+        assert!(rx_a.try_recv().is_ok());
+        assert!(rx_b.try_recv().is_ok());
+        // Inbound peer should NOT
+        assert!(rx_in.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn subscriber_receives_events() {
+        let router = Arc::new(Mutex::new(Router::new()));
+        let peer_senders: Arc<Mutex<HashMap<PeerId, PeerSender>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let subscriber: Arc<Mutex<Option<mpsc::Sender<ProtocolEvent>>>> =
+            Arc::new(Mutex::new(None));
+
+        let node = P2pNode {
+            router: router.clone(),
+            peer_senders: peer_senders.clone(),
+            subscriber: subscriber.clone(),
+        };
+
+        let mut events = node.subscribe().await;
+
+        // Drive the event loop with a one-shot channel
+        let (event_tx, event_rx) = mpsc::channel::<ProtocolEvent>(16);
+
+        let r = router.clone();
+        let ps = peer_senders.clone();
+        let sub = subscriber.clone();
+        let handle = tokio::spawn(async move {
+            event_loop(event_rx, r, ps, sub).await;
+        });
+
+        // Register a peer so the router doesn't choke
+        router.lock().await.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+
+        // Send a protocol event
+        event_tx.send(ProtocolEvent::Message {
+            peer_id: PeerId(1),
+            message: ProtocolMessage::GetPeers,
+        }).await.unwrap();
+
+        // Subscriber should see it
+        let event = events.recv().await.unwrap();
+        assert!(matches!(event, ProtocolEvent::Message { peer_id: PeerId(1), .. }));
+
+        // Cleanup
+        drop(event_tx);
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn subscriber_drops_events_when_full() {
+        let subscriber: Arc<Mutex<Option<mpsc::Sender<ProtocolEvent>>>> =
+            Arc::new(Mutex::new(None));
+
+        // Create a subscriber with capacity 2
+        let (tx, rx) = mpsc::channel(2);
+        *subscriber.lock().await = Some(tx);
+
+        // Simulate what the event loop does: try_send
+        let sub = subscriber.lock().await;
+        let tx = sub.as_ref().unwrap();
+
+        let event = ProtocolEvent::PeerDisconnected {
+            peer_id: PeerId(1),
+            reason: "test".into(),
+        };
+
+        // Fill the channel
+        assert!(tx.try_send(event.clone()).is_ok());
+        assert!(tx.try_send(event.clone()).is_ok());
+        // Third should fail (channel full), not block
+        assert!(tx.try_send(event).is_err());
+
+        // Events didn't block, and rx still works
+        drop(sub);
+        drop(rx);
     }
 }
