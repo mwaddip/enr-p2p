@@ -87,7 +87,17 @@ impl P2pNode {
             ));
         }
 
-        // Outbound manager, keepalive — added in next tasks.
+        // Start outbound connections
+        {
+            let hs_config = make_handshake_config(&config.identity, version, network, ProxyMode::Full);
+            tokio::spawn(outbound_manager(
+                config.outbound.seed_peers.clone(), config.outbound.min_peers,
+                hs_config, ProxyMode::Full,
+                event_tx.clone(), peer_senders.clone(), router.clone(), peer_counter.clone(),
+            ));
+        }
+
+        // Keepalive — added in next task.
 
         // Event loop: process protocol events through the router
         {
@@ -300,5 +310,79 @@ async fn accept_loop(
                 tracing::error!(error = %e, "Accept failed");
             }
         }
+    }
+}
+
+async fn outbound_manager(
+    seeds: Vec<std::net::SocketAddr>,
+    min_peers: usize,
+    hs_config: HandshakeConfig,
+    mode: ProxyMode,
+    event_tx: mpsc::Sender<ProtocolEvent>,
+    peer_senders: Arc<Mutex<HashMap<PeerId, PeerSender>>>,
+    router: Arc<Mutex<Router>>,
+    peer_counter: Arc<std::sync::atomic::AtomicU64>,
+) {
+    let mut backoff = Duration::from_secs(5);
+
+    loop {
+        let current_outbound = router.lock().await.outbound_peers().len();
+        if current_outbound < min_peers {
+            for addr in &seeds {
+                let current = router.lock().await.outbound_peers().len();
+                if current >= min_peers {
+                    break;
+                }
+
+                let addr = *addr;
+                tracing::info!(addr = %addr, "Connecting to outbound peer");
+                match tokio::time::timeout(
+                    Duration::from_secs(10),
+                    tokio::net::TcpStream::connect(addr),
+                ).await {
+                    Ok(Ok(stream)) => {
+                        let peer_id = PeerId(peer_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+                        let hs = HandshakeConfig {
+                            agent_name: hs_config.agent_name.clone(),
+                            peer_name: hs_config.peer_name.clone(),
+                            version: hs_config.version,
+                            network: hs_config.network,
+                            mode: hs_config.mode,
+                            declared_address: hs_config.declared_address,
+                        };
+                        let event_tx = event_tx.clone();
+                        let peer_senders = peer_senders.clone();
+                        let router = router.clone();
+
+                        tokio::spawn(async move {
+                            match Connection::outbound(stream, &hs).await {
+                                Ok(conn) => {
+                                    if handshake::is_proxy(conn.peer_spec()) {
+                                        tracing::info!(peer = %peer_id, addr = %addr, "Outbound peer is a proxy, skipping");
+                                        return;
+                                    }
+                                    tracing::info!(peer = %peer_id, "Outbound handshake OK");
+                                    run_peer(peer_id, conn, Direction::Outbound, mode, event_tx, peer_senders, router).await;
+                                }
+                                Err(e) => {
+                                    tracing::warn!(peer = %peer_id, addr = %addr, error = %e, "Outbound handshake failed");
+                                }
+                            }
+                        });
+
+                        backoff = Duration::from_secs(5);
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!(addr = %addr, error = %e, "Connect failed");
+                    }
+                    Err(_) => {
+                        tracing::warn!(addr = %addr, "Connect timeout");
+                    }
+                }
+            }
+        }
+
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(Duration::from_secs(300));
     }
 }
