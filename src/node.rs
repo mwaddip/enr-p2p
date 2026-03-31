@@ -66,7 +66,28 @@ impl P2pNode {
             router.lock().await.set_validator(v);
         }
 
-        // Listeners, outbound manager, keepalive — added in next tasks.
+        // Start listeners
+        if let Some(ref listener_cfg) = config.listen.ipv6 {
+            let listener = TcpListener::bind(listener_cfg.address).await?;
+            tracing::info!(addr = %listener_cfg.address, mode = ?listener_cfg.mode, "IPv6 listener started");
+            let hs_config = make_handshake_config(&config.identity, version, network, listener_cfg.mode);
+            tokio::spawn(accept_loop(
+                listener, hs_config, listener_cfg.mode, listener_cfg.max_inbound,
+                event_tx.clone(), peer_senders.clone(), router.clone(), peer_counter.clone(),
+            ));
+        }
+
+        if let Some(ref listener_cfg) = config.listen.ipv4 {
+            let listener = TcpListener::bind(listener_cfg.address).await?;
+            tracing::info!(addr = %listener_cfg.address, mode = ?listener_cfg.mode, "IPv4 listener started");
+            let hs_config = make_handshake_config(&config.identity, version, network, listener_cfg.mode);
+            tokio::spawn(accept_loop(
+                listener, hs_config, listener_cfg.mode, listener_cfg.max_inbound,
+                event_tx.clone(), peer_senders.clone(), router.clone(), peer_counter.clone(),
+            ));
+        }
+
+        // Outbound manager, keepalive — added in next tasks.
 
         // Event loop: process protocol events through the router
         {
@@ -211,4 +232,73 @@ async fn run_peer(
     }).await;
 
     tracing::info!(peer = %peer_id, "Peer removed");
+}
+
+fn make_handshake_config(
+    identity: &crate::config::IdentityConfig,
+    version: Version,
+    network: crate::types::Network,
+    mode: ProxyMode,
+) -> HandshakeConfig {
+    HandshakeConfig {
+        agent_name: identity.agent_name.clone(),
+        peer_name: identity.peer_name.clone(),
+        version,
+        network,
+        mode,
+        declared_address: None,
+    }
+}
+
+async fn accept_loop(
+    listener: TcpListener,
+    hs_config: HandshakeConfig,
+    mode: ProxyMode,
+    max_inbound: usize,
+    event_tx: mpsc::Sender<ProtocolEvent>,
+    peer_senders: Arc<Mutex<HashMap<PeerId, PeerSender>>>,
+    router: Arc<Mutex<Router>>,
+    peer_counter: Arc<std::sync::atomic::AtomicU64>,
+) {
+    loop {
+        match listener.accept().await {
+            Ok((stream, addr)) => {
+                let remote_ip = addr.ip();
+                let inbound_count = router.lock().await.inbound_peers().len();
+                if inbound_count >= max_inbound {
+                    tracing::warn!(ip = %remote_ip, "F2B_REJECT connection limit exceeded");
+                    continue;
+                }
+
+                let peer_id = PeerId(peer_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+                tracing::info!(peer = %peer_id, ip = %remote_ip, "Inbound connection");
+
+                let hs = HandshakeConfig {
+                    agent_name: hs_config.agent_name.clone(),
+                    peer_name: hs_config.peer_name.clone(),
+                    version: hs_config.version,
+                    network: hs_config.network,
+                    mode: hs_config.mode,
+                    declared_address: hs_config.declared_address,
+                };
+                let event_tx = event_tx.clone();
+                let peer_senders = peer_senders.clone();
+                let router = router.clone();
+
+                tokio::spawn(async move {
+                    match Connection::inbound(stream, &hs).await {
+                        Ok(conn) => {
+                            run_peer(peer_id, conn, Direction::Inbound, mode, event_tx, peer_senders, router).await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(ip = %remote_ip, error = %e, "F2B_HANDSHAKE_FAIL bad handshake");
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Accept failed");
+            }
+        }
+    }
 }
