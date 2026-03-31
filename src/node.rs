@@ -97,7 +97,25 @@ impl P2pNode {
             ));
         }
 
-        // Keepalive — added in next task.
+        // Keepalive: send GetPeers every 2 minutes
+        {
+            let router = router.clone();
+            let peer_senders = peer_senders.clone();
+            tokio::spawn(async move {
+                let mut ticker = interval(Duration::from_secs(120));
+                loop {
+                    ticker.tick().await;
+                    let outbound = router.lock().await.outbound_peers();
+                    let senders = peer_senders.lock().await;
+                    let frame = ProtocolMessage::GetPeers.to_frame();
+                    for pid in outbound {
+                        if let Some(tx) = senders.get(&pid) {
+                            let _ = tx.send(frame.clone()).await;
+                        }
+                    }
+                }
+            });
+        }
 
         // Event loop: process protocol events through the router
         {
