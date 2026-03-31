@@ -405,3 +405,61 @@ fn router_validator_partial_rejection() {
     assert!(!forwarded_ids.contains(&[0xbb; 32]));
     assert!(forwarded_ids.contains(&[0xcc; 32]));
 }
+
+struct RejectAll;
+
+impl ModifierValidator for RejectAll {
+    fn validate(&mut self, _: u8, _: &[u8; 32], _: &[u8]) -> ModifierVerdict {
+        ModifierVerdict::Reject
+    }
+}
+
+#[test]
+fn router_rejected_modifier_skips_trackers() {
+    let mut router = Router::new();
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+
+    // Setup: inv + request
+    router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::Inv { modifier_type: 1, ids: vec![[0xaa; 32]] },
+    });
+    router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(2),
+        message: ProtocolMessage::ModifierRequest { modifier_type: 1, ids: vec![[0xaa; 32]] },
+    });
+
+    // Phase 1: reject the response
+    router.set_validator(Box::new(RejectAll));
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::ModifierResponse {
+            modifier_type: 1,
+            modifiers: vec![([0xaa; 32], vec![1, 2, 3])],
+        },
+    });
+    assert!(actions.is_empty(), "rejected response should produce no actions");
+
+    // Latency tracker should have no stats — rejected response was not recorded
+    assert!(router.latency_stats().is_none(), "rejected response should not update latency tracker");
+
+    // Phase 2: accept the same modifier (proves request tracker wasn't fulfilled)
+    router.set_validator(Box::new(AcceptAll));
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::ModifierResponse {
+            modifier_type: 1,
+            modifiers: vec![([0xaa; 32], vec![1, 2, 3])],
+        },
+    });
+
+    // The request tracker should still have the pending entry — now fulfilled
+    let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
+        Action::Send { target, .. } => Some(*target),
+    }).collect();
+    assert_eq!(targets, vec![PeerId(2)], "request tracker should still have pending entry after rejection");
+
+    // Now latency tracker should have stats from the accepted response
+    assert!(router.latency_stats().is_some(), "accepted response should update latency tracker");
+}
