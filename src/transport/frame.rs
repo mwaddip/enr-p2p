@@ -14,7 +14,11 @@ use std::io;
 
 type Blake2b256 = Blake2b<U32>;
 
-const HEADER_SIZE: usize = 13; // 4 magic + 1 code + 4 length + 4 checksum
+/// Minimum frame size: magic(4) + code(1) + length(4) = 9 bytes.
+/// Checksum(4) and body follow only when body length > 0.
+const MIN_HEADER_SIZE: usize = 9;
+/// Full header with checksum: magic(4) + code(1) + length(4) + checksum(4) = 13 bytes.
+const HEADER_SIZE: usize = 13;
 const MAX_BODY_SIZE: u32 = 256 * 1024;
 
 /// A validated P2P message frame.
@@ -25,23 +29,30 @@ pub struct Frame {
 }
 
 /// Encode a Frame into wire bytes with the given network magic.
+///
+/// When body is empty, the checksum is omitted — matching the JVM's
+/// `MessageSerializer.serialize` which only writes checksum when
+/// `dataLength > 0`. Sending a checksum for empty bodies desynchronizes
+/// the JVM's frame parser.
 pub fn encode(magic: &[u8; 4], frame: &Frame) -> Vec<u8> {
     let mut msg = Vec::with_capacity(HEADER_SIZE + frame.body.len());
     msg.extend_from_slice(magic);
     msg.push(frame.code);
     msg.extend_from_slice(&(frame.body.len() as u32).to_be_bytes());
-    let hash = Blake2b256::digest(&frame.body);
-    msg.extend_from_slice(&hash[..4]);
-    msg.extend_from_slice(&frame.body);
+    if !frame.body.is_empty() {
+        let hash = Blake2b256::digest(&frame.body);
+        msg.extend_from_slice(&hash[..4]);
+        msg.extend_from_slice(&frame.body);
+    }
     msg
 }
 
 /// Decode a Frame from wire bytes, validating magic and checksum.
 pub fn decode(magic: &[u8; 4], data: &[u8]) -> io::Result<Frame> {
-    if data.len() < HEADER_SIZE {
+    if data.len() < MIN_HEADER_SIZE {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("Frame too short: {} bytes (need at least {})", data.len(), HEADER_SIZE),
+            format!("Frame too short: {} bytes (need at least {})", data.len(), MIN_HEADER_SIZE),
         ));
     }
 
@@ -68,6 +79,11 @@ pub fn decode(magic: &[u8; 4], data: &[u8]) -> io::Result<Frame> {
             io::ErrorKind::InvalidData,
             format!("Frame truncated: have {} bytes, need {}", data.len(), expected_total),
         ));
+    }
+
+    if body_len == 0 {
+        // Empty body — no checksum on the wire (JVM omits it)
+        return Ok(Frame { code, body: vec![] });
     }
 
     let checksum = &data[9..13];
@@ -100,23 +116,25 @@ pub async fn read_frame(
     reader: &mut (impl tokio::io::AsyncReadExt + Unpin),
     magic: &[u8; 4],
 ) -> io::Result<Frame> {
-    let mut header = [0u8; HEADER_SIZE];
-    reader.read_exact(&mut header).await?;
+    // Read fixed prefix: magic(4) + code(1) + length(4) = 9 bytes.
+    // Checksum(4) follows only when body length > 0 (JVM omits it for empty bodies).
+    let mut prefix = [0u8; 9];
+    reader.read_exact(&mut prefix).await?;
 
-    if &header[0..4] != magic {
+    if &prefix[0..4] != magic {
         tracing::error!(
-            received = format!("{:02x}{:02x}{:02x}{:02x}", header[0], header[1], header[2], header[3]),
+            received = format!("{:02x}{:02x}{:02x}{:02x}", prefix[0], prefix[1], prefix[2], prefix[3]),
             expected = format!("{:02x}{:02x}{:02x}{:02x}", magic[0], magic[1], magic[2], magic[3]),
             "Frame magic mismatch — stream likely misaligned"
         );
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("Bad magic: {:?} (expected {:?})", &header[0..4], magic),
+            format!("Bad magic: {:?} (expected {:?})", &prefix[0..4], magic),
         ));
     }
 
-    let code = header[4];
-    let body_len = u32::from_be_bytes([header[5], header[6], header[7], header[8]]);
+    let code = prefix[4];
+    let body_len = u32::from_be_bytes([prefix[5], prefix[6], prefix[7], prefix[8]]);
 
     if body_len > MAX_BODY_SIZE {
         return Err(io::Error::new(
@@ -125,12 +143,17 @@ pub async fn read_frame(
         ));
     }
 
-    let checksum = &header[9..13];
+    // Empty body — no checksum on wire
+    if body_len == 0 {
+        return Ok(Frame { code, body: vec![] });
+    }
+
+    // Read checksum(4) + body
+    let mut checksum = [0u8; 4];
+    reader.read_exact(&mut checksum).await?;
 
     let mut body = vec![0u8; body_len as usize];
-    if body_len > 0 {
-        reader.read_exact(&mut body).await?;
-    }
+    reader.read_exact(&mut body).await?;
 
     let hash = Blake2b256::digest(&body);
     if &hash[..4] != checksum {
