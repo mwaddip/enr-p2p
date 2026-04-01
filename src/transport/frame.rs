@@ -73,17 +73,17 @@ pub fn decode(magic: &[u8; 4], data: &[u8]) -> io::Result<Frame> {
         ));
     }
 
+    // Empty body — no checksum on the wire (JVM omits it)
+    if body_len == 0 {
+        return Ok(Frame { code, body: vec![] });
+    }
+
     let expected_total = HEADER_SIZE + body_len as usize;
     if data.len() < expected_total {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Frame truncated: have {} bytes, need {}", data.len(), expected_total),
         ));
-    }
-
-    if body_len == 0 {
-        // Empty body — no checksum on the wire (JVM omits it)
-        return Ok(Frame { code, body: vec![] });
     }
 
     let checksum = &data[9..13];

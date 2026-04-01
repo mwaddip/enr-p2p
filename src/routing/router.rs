@@ -200,7 +200,7 @@ impl Router {
             ProtocolMessage::GetPeers => {
                 vec![Action::Send {
                     target: source,
-                    message: ProtocolMessage::Peers { body: vec![] },
+                    message: ProtocolMessage::Peers { body: vec![0x00] },
                 }]
             }
 
