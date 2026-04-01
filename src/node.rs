@@ -221,11 +221,20 @@ async fn event_loop(
     loop {
         match event_rx.recv().await {
             Some(event) => {
-                // Tap: send to subscriber before routing (non-blocking)
+                // Tap: send to subscriber before routing (non-blocking).
+                // Filter out ModifierResponse — it has its own path via modifier_sink
+                // and would otherwise flood the bounded subscriber channel, causing
+                // Inv and SyncInfo events to be silently dropped during heavy sync.
                 {
-                    let sub = subscriber.lock().await;
-                    if let Some(tx) = sub.as_ref() {
-                        let _ = tx.try_send(event.clone());
+                    let dominated_by_modifier_response = matches!(
+                        &event,
+                        ProtocolEvent::Message { message: ProtocolMessage::ModifierResponse { .. }, .. }
+                    );
+                    if !dominated_by_modifier_response {
+                        let sub = subscriber.lock().await;
+                        if let Some(tx) = sub.as_ref() {
+                            let _ = tx.try_send(event.clone());
+                        }
                     }
                 }
 
