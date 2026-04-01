@@ -75,6 +75,13 @@ pub fn decode(magic: &[u8; 4], data: &[u8]) -> io::Result<Frame> {
 
     let hash = Blake2b256::digest(body);
     if &hash[..4] != checksum {
+        tracing::error!(
+            code = code,
+            body_len = body_len,
+            expected = format!("{:02x}{:02x}{:02x}{:02x}", checksum[0], checksum[1], checksum[2], checksum[3]),
+            computed = format!("{:02x}{:02x}{:02x}{:02x}", hash[0], hash[1], hash[2], hash[3]),
+            "Checksum mismatch (decode)"
+        );
         return Err(io::Error::new(io::ErrorKind::InvalidData, "Checksum mismatch"));
     }
 
@@ -97,9 +104,14 @@ pub async fn read_frame(
     reader.read_exact(&mut header).await?;
 
     if &header[0..4] != magic {
+        tracing::error!(
+            received = format!("{:02x}{:02x}{:02x}{:02x}", header[0], header[1], header[2], header[3]),
+            expected = format!("{:02x}{:02x}{:02x}{:02x}", magic[0], magic[1], magic[2], magic[3]),
+            "Frame magic mismatch — stream likely misaligned"
+        );
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("Bad magic: {:?}", &header[0..4]),
+            format!("Bad magic: {:?} (expected {:?})", &header[0..4], magic),
         ));
     }
 
@@ -122,9 +134,17 @@ pub async fn read_frame(
 
     let hash = Blake2b256::digest(&body);
     if &hash[..4] != checksum {
+        tracing::error!(
+            code = code,
+            body_len = body_len,
+            expected = format!("{:02x}{:02x}{:02x}{:02x}", checksum[0], checksum[1], checksum[2], checksum[3]),
+            computed = format!("{:02x}{:02x}{:02x}{:02x}", hash[0], hash[1], hash[2], hash[3]),
+            "Checksum mismatch"
+        );
         return Err(io::Error::new(io::ErrorKind::InvalidData, "Checksum mismatch"));
     }
 
+    tracing::debug!(code = code, body_len = body_len, "frame received");
     Ok(Frame { code, body })
 }
 
