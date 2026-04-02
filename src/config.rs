@@ -8,6 +8,61 @@ pub struct Config {
     pub listen: ListenConfig,
     pub outbound: OutboundConfig,
     pub identity: IdentityConfig,
+    pub network: Option<NetworkConfig>,
+}
+
+/// Network-level settings matching the JVM's `scorex.network` config.
+/// All fields have defaults matching JVM behavior.
+#[derive(Debug, Clone, Deserialize)]
+pub struct NetworkConfig {
+    /// Interval between GetPeers keepalive messages.
+    #[serde(default = "default_get_peers_interval")]
+    pub get_peers_interval_secs: u64,
+    /// Timeout for modifier delivery.
+    #[serde(default = "default_delivery_timeout")]
+    pub delivery_timeout_secs: u64,
+    /// Max re-request attempts before abandoning a modifier.
+    #[serde(default = "default_max_delivery_checks")]
+    pub max_delivery_checks: u32,
+    /// Desired number of modifier IDs per Inv/Request batch.
+    #[serde(default = "default_desired_inv_objects")]
+    pub desired_inv_objects: u32,
+    /// Maximum PeerSpec objects in one Peers message.
+    #[serde(default = "default_max_peer_spec_objects")]
+    pub max_peer_spec_objects: u32,
+    /// Handshake timeout.
+    #[serde(default = "default_handshake_timeout")]
+    pub handshake_timeout_secs: u64,
+    /// Drop connections inactive for this duration.
+    #[serde(default = "default_inactive_connection_deadline")]
+    pub inactive_connection_deadline_secs: u64,
+    /// Default temporary ban duration in minutes.
+    #[serde(default = "default_temporal_ban_duration")]
+    pub temporal_ban_duration_mins: u64,
+}
+
+fn default_get_peers_interval() -> u64 { 120 }
+fn default_delivery_timeout() -> u64 { 10 }
+fn default_max_delivery_checks() -> u32 { 100 }
+fn default_desired_inv_objects() -> u32 { 400 }
+fn default_max_peer_spec_objects() -> u32 { 64 }
+fn default_handshake_timeout() -> u64 { 30 }
+fn default_inactive_connection_deadline() -> u64 { 600 }
+fn default_temporal_ban_duration() -> u64 { 60 }
+
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self {
+            get_peers_interval_secs: default_get_peers_interval(),
+            delivery_timeout_secs: default_delivery_timeout(),
+            max_delivery_checks: default_max_delivery_checks(),
+            desired_inv_objects: default_desired_inv_objects(),
+            max_peer_spec_objects: default_max_peer_spec_objects(),
+            handshake_timeout_secs: default_handshake_timeout(),
+            inactive_connection_deadline_secs: default_inactive_connection_deadline(),
+            temporal_ban_duration_mins: default_temporal_ban_duration(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,6 +121,11 @@ impl Config {
         }
 
         Ok(config)
+    }
+
+    /// Returns network settings, using defaults if the `[network]` section is absent.
+    pub fn network_settings(&self) -> NetworkConfig {
+        self.network.clone().unwrap_or_default()
     }
 
     /// Parse the protocol version string into (major, minor, patch).
