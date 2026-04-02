@@ -19,7 +19,7 @@ type Blake2b256 = Blake2b<U32>;
 const MIN_HEADER_SIZE: usize = 9;
 /// Full header with checksum: magic(4) + code(1) + length(4) + checksum(4) = 13 bytes.
 const HEADER_SIZE: usize = 13;
-const MAX_BODY_SIZE: u32 = 256 * 1024;
+const MAX_BODY_SIZE: u32 = 2 * 1024 * 1024;
 
 /// A validated P2P message frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
