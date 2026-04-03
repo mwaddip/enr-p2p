@@ -108,6 +108,7 @@ fn proxy_handshake_roundtrips() {
         network: Network::Testnet,
         mode: ProxyMode::Full,
         declared_address: None,
+        mode_config: handshake::ModeConfig::default(),
     };
     let bytes = handshake::build(&config);
     let spec = handshake::parse(&bytes).unwrap();
@@ -128,6 +129,7 @@ fn proxy_handshake_feature_body_lengths_are_u16_be() {
         network: Network::Testnet,
         mode: ProxyMode::Full,
         declared_address: None,
+        mode_config: handshake::ModeConfig::default(),
     };
     let bytes = handshake::build(&config);
 
@@ -160,6 +162,7 @@ fn proxy_handshake_matches_jvm_structure() {
         network: Network::Testnet,
         mode: ProxyMode::Full,
         declared_address: None,
+        mode_config: handshake::ModeConfig::default(),
     };
     let proxy_bytes = handshake::build(&config);
     let proxy_spec = handshake::parse(&proxy_bytes).unwrap();

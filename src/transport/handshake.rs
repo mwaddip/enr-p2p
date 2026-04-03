@@ -21,6 +21,30 @@ const FEATURE_SESSION: u8 = 3;
 /// Other proxies detect this and avoid treating each other as outbound content sources.
 pub const FEATURE_PROXY: u8 = 64;
 
+/// What to advertise in the Mode feature (ID 16) during handshake.
+///
+/// The main crate constructs this from the node config — the P2P crate
+/// encodes these values but doesn't interpret them.
+#[derive(Debug, Clone, Copy)]
+pub struct ModeConfig {
+    /// State type byte: 0 = UTXO, 1 = Digest.
+    pub state_type_id: u8,
+    /// Whether this node verifies transactions (false = SPV/header-only).
+    pub verifying: bool,
+    /// How many blocks to keep. -1 = all (archival), 0 = none (header-only).
+    pub blocks_to_keep: i32,
+}
+
+impl Default for ModeConfig {
+    fn default() -> Self {
+        Self {
+            state_type_id: 0, // UTXO
+            verifying: true,
+            blocks_to_keep: -1, // keep all
+        }
+    }
+}
+
 /// Configuration for building a handshake.
 pub struct HandshakeConfig {
     pub agent_name: String,
@@ -29,6 +53,8 @@ pub struct HandshakeConfig {
     pub network: Network,
     pub mode: ProxyMode,
     pub declared_address: Option<SocketAddr>,
+    /// Mode feature advertisement — what capabilities to claim in the handshake.
+    pub mode_config: ModeConfig,
 }
 
 /// A parsed peer feature.
@@ -88,7 +114,7 @@ pub fn build(config: &HandshakeConfig) -> Vec<u8> {
 
     // Mode feature (id=16)
     buf.push(FEATURE_MODE);
-    let mode_body = build_mode_body(config.mode);
+    let mode_body = build_mode_body(config);
     // Feature body length is VLQ-encoded (Scorex putUShort → putUInt → putULong → VLQ)
     vlq::write_vlq(&mut buf, mode_body.len() as u64);
     buf.extend_from_slice(&mode_body);
@@ -107,18 +133,29 @@ pub fn build(config: &HandshakeConfig) -> Vec<u8> {
     buf
 }
 
-fn build_mode_body(mode: ProxyMode) -> Vec<u8> {
-    match mode {
-        ProxyMode::Full => {
-            // stateType=UTXO(0), verifying=true(1), nipopow=None(0), blocksToKeep=-1(zigzag=1)
-            vec![0x00, 0x01, 0x00, 0x01]
-        }
+fn build_mode_body(config: &HandshakeConfig) -> Vec<u8> {
+    let mc = &config.mode_config;
+    let mut body = Vec::with_capacity(8);
+
+    // stateType: 0 = UTXO, 1 = Digest
+    body.push(mc.state_type_id);
+
+    // verifying: whether we verify transactions
+    body.push(if mc.verifying { 0x01 } else { 0x00 });
+
+    // nipopow: NiPoPoW bootstrap flag
+    match config.mode {
+        ProxyMode::Full => body.push(0x00),    // None
         ProxyMode::Light => {
-            // stateType=UTXO(0), verifying=true(1), nipopow=Some(0x01) value=1(zigzag=2),
-            // blocksToKeep=-1(zigzag=1)
-            vec![0x00, 0x01, 0x01, 0x02, 0x01]
+            body.push(0x01);                    // Some
+            vlq::write_vlq(&mut body, vlq::zigzag_encode_i64(1)); // value=1 (KMZ17)
         }
     }
+
+    // blocksToKeep: zigzag-encoded VLQ (JVM putInt → zigzag → VLQ)
+    vlq::write_vlq(&mut body, vlq::zigzag_encode_i64(mc.blocks_to_keep as i64));
+
+    body
 }
 
 fn build_session_body(network: Network) -> Vec<u8> {

@@ -161,6 +161,7 @@ fn handshake_build_parse_roundtrip() {
         network: Network::Testnet,
         mode: ProxyMode::Full,
         declared_address: None,
+        mode_config: handshake::ModeConfig::default(),
     };
     let bytes = handshake::build(&config);
     let spec = handshake::parse(&bytes).unwrap();
@@ -181,6 +182,7 @@ fn handshake_proxy_feature_present() {
         network: Network::Testnet,
         mode: ProxyMode::Full,
         declared_address: None,
+        mode_config: handshake::ModeConfig::default(),
     };
     let bytes = handshake::build(&config);
     let spec = handshake::parse(&bytes).unwrap();
@@ -211,6 +213,7 @@ fn handshake_full_mode_feature() {
         network: Network::Testnet,
         mode: ProxyMode::Full,
         declared_address: None,
+        mode_config: handshake::ModeConfig::default(),
     };
     let bytes = handshake::build(&config);
     let spec = handshake::parse(&bytes).unwrap();
@@ -227,6 +230,7 @@ fn handshake_light_mode_feature() {
         network: Network::Testnet,
         mode: ProxyMode::Light,
         declared_address: None,
+        mode_config: handshake::ModeConfig::default(),
     };
     let bytes = handshake::build(&config);
     let spec = handshake::parse(&bytes).unwrap();
@@ -243,6 +247,7 @@ fn handshake_session_feature_has_correct_magic() {
         network: Network::Testnet,
         mode: ProxyMode::Full,
         declared_address: None,
+        mode_config: handshake::ModeConfig::default(),
     };
     let bytes = handshake::build(&config);
     let spec = handshake::parse(&bytes).unwrap();
@@ -261,6 +266,7 @@ fn handshake_version_validation() {
         network: Network::Testnet,
         mode: ProxyMode::Full,
         declared_address: None,
+        mode_config: handshake::ModeConfig::default(),
     };
     let bytes = handshake::build(&config);
     let spec = handshake::parse(&bytes).unwrap();
@@ -276,6 +282,7 @@ fn handshake_valid_peer_accepted() {
         network: Network::Testnet,
         mode: ProxyMode::Full,
         declared_address: None,
+        mode_config: handshake::ModeConfig::default(),
     };
     let bytes = handshake::build(&config);
     let spec = handshake::parse(&bytes).unwrap();

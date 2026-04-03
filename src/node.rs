@@ -70,6 +70,7 @@ impl P2pNode {
     pub async fn start(
         config: Config,
         modifier_sink: Option<mpsc::Sender<(u8, [u8; 32], Vec<u8>)>>,
+        mode_config: handshake::ModeConfig,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let (ver_major, ver_minor, ver_patch) = config.version_bytes()?;
         let version = Version::new(ver_major, ver_minor, ver_patch);
@@ -89,7 +90,7 @@ impl P2pNode {
         if let Some(ref listener_cfg) = config.listen.ipv6 {
             let listener = TcpListener::bind(listener_cfg.address).await?;
             tracing::info!(addr = %listener_cfg.address, mode = ?listener_cfg.mode, "IPv6 listener started");
-            let hs_config = make_handshake_config(&config.identity, version, network, listener_cfg.mode);
+            let hs_config = make_handshake_config(&config.identity, version, network, listener_cfg.mode, mode_config);
             tokio::spawn(accept_loop(
                 listener, hs_config, listener_cfg.mode, listener_cfg.max_inbound,
                 event_tx.clone(), peer_senders.clone(), router.clone(), peer_counter.clone(),
@@ -99,7 +100,7 @@ impl P2pNode {
         if let Some(ref listener_cfg) = config.listen.ipv4 {
             let listener = TcpListener::bind(listener_cfg.address).await?;
             tracing::info!(addr = %listener_cfg.address, mode = ?listener_cfg.mode, "IPv4 listener started");
-            let hs_config = make_handshake_config(&config.identity, version, network, listener_cfg.mode);
+            let hs_config = make_handshake_config(&config.identity, version, network, listener_cfg.mode, mode_config);
             tokio::spawn(accept_loop(
                 listener, hs_config, listener_cfg.mode, listener_cfg.max_inbound,
                 event_tx.clone(), peer_senders.clone(), router.clone(), peer_counter.clone(),
@@ -108,7 +109,7 @@ impl P2pNode {
 
         // Start outbound connections
         {
-            let hs_config = make_handshake_config(&config.identity, version, network, ProxyMode::Full);
+            let hs_config = make_handshake_config(&config.identity, version, network, ProxyMode::Full, mode_config);
             tokio::spawn(outbound_manager(
                 config.outbound.seed_peers.clone(), config.outbound.min_peers,
                 hs_config, ProxyMode::Full,
@@ -355,6 +356,7 @@ fn make_handshake_config(
     version: Version,
     network: crate::types::Network,
     mode: ProxyMode,
+    mode_config: handshake::ModeConfig,
 ) -> HandshakeConfig {
     HandshakeConfig {
         agent_name: identity.agent_name.clone(),
@@ -363,6 +365,7 @@ fn make_handshake_config(
         network,
         mode,
         declared_address: None,
+        mode_config,
     }
 }
 
@@ -396,6 +399,7 @@ async fn accept_loop(
                     network: hs_config.network,
                     mode: hs_config.mode,
                     declared_address: hs_config.declared_address,
+                    mode_config: hs_config.mode_config,
                 };
                 let event_tx = event_tx.clone();
                 let peer_senders = peer_senders.clone();
@@ -455,6 +459,7 @@ async fn outbound_manager(
                             network: hs_config.network,
                             mode: hs_config.mode,
                             declared_address: hs_config.declared_address,
+                            mode_config: hs_config.mode_config,
                         };
                         let event_tx = event_tx.clone();
                         let peer_senders = peer_senders.clone();
