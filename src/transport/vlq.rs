@@ -55,12 +55,12 @@ pub fn read_vlq<R: Read>(reader: &mut R) -> io::Result<u64> {
     Ok(result)
 }
 
-const MAX_VLQ_LENGTH: u64 = 256 * 1024;
+const MAX_VLQ_LENGTH: u64 = 2 * 1024 * 1024;
 
-/// Read a VLQ value representing a byte length, capped at 256KB.
+/// Read a VLQ value representing a byte length, capped at 2MB.
 ///
 /// # Postcondition
-/// - Returns a `usize` in range `0..=262144`, or an error if the value exceeds the cap.
+/// - Returns a `usize` in range `0..=2097152`, or an error if the value exceeds the cap.
 pub fn read_vlq_length<R: Read>(reader: &mut R) -> io::Result<usize> {
     let val = read_vlq(reader)?;
     if val > MAX_VLQ_LENGTH {
