@@ -170,11 +170,12 @@ fn handshake_build_parse_roundtrip() {
     assert_eq!(spec.name, "test-node");
     assert_eq!(spec.version, Version::new(6, 0, 3));
     assert_eq!(spec.address, None);
-    assert!(spec.features.len() >= 3); // Mode + Session + Proxy
+    assert!(spec.features.len() >= 2); // Mode + Session
 }
 
 #[test]
-fn handshake_proxy_feature_present() {
+fn handshake_self_built_is_not_proxy() {
+    // We no longer advertise FEATURE_PROXY — verify our own handshake
     let config = HandshakeConfig {
         agent_name: "ergo-proxy".to_string(),
         peer_name: "test-node".to_string(),
@@ -186,21 +187,6 @@ fn handshake_proxy_feature_present() {
     };
     let bytes = handshake::build(&config);
     let spec = handshake::parse(&bytes).unwrap();
-    assert!(handshake::is_proxy(&spec));
-    let proxy_feat = spec.features.iter().find(|f| f.id == 64).unwrap();
-    assert_eq!(proxy_feat.body, vec![0x01]); // version 1
-}
-
-#[test]
-fn handshake_jvm_node_is_not_proxy() {
-    // JVM nodes don't send feature 64
-    let spec = enr_p2p::transport::handshake::PeerSpec {
-        agent: "ergoref".into(),
-        version: Version::new(6, 0, 3),
-        name: "test".into(),
-        address: None,
-        features: vec![],
-    };
     assert!(!handshake::is_proxy(&spec));
 }
 

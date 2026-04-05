@@ -125,11 +125,6 @@ pub fn build(config: &HandshakeConfig) -> Vec<u8> {
     vlq::write_vlq(&mut buf, session_body.len() as u64);
     buf.extend_from_slice(&session_body);
 
-    // Proxy feature (id=64) — signals this peer is a relay proxy
-    buf.push(FEATURE_PROXY);
-    vlq::write_vlq(&mut buf, 1); // body length = 1
-    buf.push(0x01); // proxy protocol version 1
-
     buf
 }
 

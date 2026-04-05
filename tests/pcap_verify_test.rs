@@ -138,7 +138,7 @@ fn proxy_handshake_feature_body_lengths_are_u16_be() {
     let spec = handshake::parse(&bytes).unwrap();
 
     // Verify features are parseable (which means body lengths are correct)
-    assert_eq!(spec.features.len(), 3, "Should have Mode + Session + Proxy features");
+    assert_eq!(spec.features.len(), 2, "Should have Mode + Session features");
 
     // Verify Mode feature matches JVM format
     let mode = spec.features.iter().find(|f| f.id == 16).unwrap();
