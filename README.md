@@ -52,7 +52,7 @@ The Ergo P2P wire protocol was reverse-engineered from the JVM reference node an
 
 Key discoveries:
 - All Scorex integer fields use VLQ encoding, not fixed-width (method names like `putUShort` are misleading)
-- Handshake feature body lengths are u16 big-endian (not VLQ)
+- Handshake feature body lengths are VLQ-encoded (like all other Scorex integer fields)
 - Empty-body messages omit the checksum on the wire (JVM's `MessageSerializer` only writes checksum when `dataLength > 0`)
 
 ## Building

@@ -109,8 +109,8 @@ pub fn build(config: &HandshakeConfig) -> Vec<u8> {
         }
     }
 
-    // Features: Mode + Session + Proxy
-    buf.push(3); // feature count
+    // Features: Mode + Session
+    buf.push(2); // feature count
 
     // Mode feature (id=16)
     buf.push(FEATURE_MODE);
@@ -262,24 +262,16 @@ fn parse_address<R: Read>(reader: &mut R) -> io::Result<Option<SocketAddr>> {
 fn parse_features<R: Read>(reader: &mut R) -> io::Result<Vec<Feature>> {
     let mut features = Vec::new();
     let mut feat_count_buf = [0u8; 1];
-    if reader.read_exact(&mut feat_count_buf).is_ok() {
-        let feat_count = feat_count_buf[0] as usize;
-        for _ in 0..feat_count {
-            let mut fid = [0u8; 1];
-            if reader.read_exact(&mut fid).is_err() {
-                break;
-            }
-            // Feature body length is VLQ-encoded (Scorex getUShort → VLQ)
-            let flen = match vlq::read_vlq_length(reader) {
-                Ok(len) => len,
-                Err(_) => break,
-            };
-            let mut fbody = vec![0u8; flen];
-            if reader.read_exact(&mut fbody).is_err() {
-                break;
-            }
-            features.push(Feature { id: fid[0], body: fbody });
-        }
+    reader.read_exact(&mut feat_count_buf)?;
+    let feat_count = feat_count_buf[0] as usize;
+    for _ in 0..feat_count {
+        let mut fid = [0u8; 1];
+        reader.read_exact(&mut fid)?;
+        // Feature body length is VLQ-encoded (Scorex getUShort → VLQ)
+        let flen = vlq::read_vlq_length(reader)?;
+        let mut fbody = vec![0u8; flen];
+        reader.read_exact(&mut fbody)?;
+        features.push(Feature { id: fid[0], body: fbody });
     }
     Ok(features)
 }
