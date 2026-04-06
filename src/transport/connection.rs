@@ -2,24 +2,16 @@
 //!
 //! # Contract
 //! - `Connection::outbound`: performs handshake as initiator (send then receive).
-//!   Precondition: `stream` is a connected TCP stream.
-//!   Postcondition: both sides have exchanged handshakes; peer's PeerSpec is available.
 //! - `Connection::inbound`: performs handshake as responder (receive then send).
-//!   Precondition: `stream` is a connected TCP stream.
-//!   Postcondition: both sides have exchanged handshakes; peer's PeerSpec is available.
 //! - `Connection::read_frame`: reads the next frame from the stream.
-//!   Postcondition: returns a validated `Frame` or error.
 //! - `Connection::write_frame`: writes a frame to the stream.
-//!   Postcondition: frame is fully written and flushed.
-//! - Invariant: the connection's magic is fixed at construction time and never changes.
-//! - Invariant: BufReader is created after handshake completes with an empty internal
-//!   buffer. During handshake, no frame data can arrive (both sides block), so no
-//!   bytes are lost between handshake and first frame.
+//! - Invariant: the connection's magic is fixed at construction time.
+//! - Invariant: no bytes are lost between handshake and first frame.
 
 use crate::transport::frame::{self, Frame};
 use crate::transport::handshake::{self, HandshakeConfig, PeerSpec};
 use std::io;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::time::{timeout, Duration};
@@ -28,7 +20,6 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 const HANDSHAKE_MAX_SIZE: usize = 8192;
 
 /// An active P2P connection with completed handshake.
-/// Uses BufReader to ensure no bytes are lost between handshake and framed messages.
 pub struct Connection {
     reader: BufReader<OwnedReadHalf>,
     writer: OwnedWriteHalf,
@@ -38,50 +29,44 @@ pub struct Connection {
 
 impl Connection {
     /// Establish a connection by performing the handshake as initiator (outbound).
-    ///
-    /// Sends our handshake, reads the peer's handshake, validates it.
     pub async fn outbound(
         stream: TcpStream,
         config: &HandshakeConfig,
     ) -> io::Result<Self> {
         let magic = config.network.magic();
-        let (mut read_half, mut write_half) = stream.into_split();
+        let (read_half, mut write_half) = stream.into_split();
+        let mut reader = BufReader::new(read_half);
 
         // Send our handshake
         let hs_bytes = handshake::build(config);
         write_half.write_all(&hs_bytes).await?;
         write_half.flush().await?;
 
-        // Read peer's handshake from raw stream (accumulates TCP segments)
-        let peer_spec = timeout(HANDSHAKE_TIMEOUT, read_handshake_raw(&mut read_half))
+        // Read peer's handshake (accumulates TCP segments)
+        let peer_spec = timeout(HANDSHAKE_TIMEOUT, read_handshake(&mut reader))
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Handshake timeout"))??;
 
-        // Validate
         handshake::validate_peer(&peer_spec, &config.network)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        // Wrap in BufReader after handshake — internal buffer starts empty
-        let reader = BufReader::new(read_half);
         Ok(Self { reader, writer: write_half, magic, peer_spec })
     }
 
     /// Accept a connection by performing the handshake as responder (inbound).
-    ///
-    /// Reads the peer's handshake first, validates it, then sends ours.
     pub async fn inbound(
         stream: TcpStream,
         config: &HandshakeConfig,
     ) -> io::Result<Self> {
         let magic = config.network.magic();
-        let (mut read_half, mut write_half) = stream.into_split();
+        let (read_half, mut write_half) = stream.into_split();
+        let mut reader = BufReader::new(read_half);
 
-        // Read peer's handshake from raw stream (accumulates TCP segments)
-        let peer_spec = timeout(HANDSHAKE_TIMEOUT, read_handshake_raw(&mut read_half))
+        // Read peer's handshake first (accumulates TCP segments)
+        let peer_spec = timeout(HANDSHAKE_TIMEOUT, read_handshake(&mut reader))
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Handshake timeout"))??;
 
-        // Validate before sending ours
         handshake::validate_peer(&peer_spec, &config.network)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
@@ -90,8 +75,6 @@ impl Connection {
         write_half.write_all(&hs_bytes).await?;
         write_half.flush().await?;
 
-        // Wrap in BufReader after handshake — internal buffer starts empty
-        let reader = BufReader::new(read_half);
         Ok(Self { reader, writer: write_half, magic, peer_spec })
     }
 
@@ -105,35 +88,45 @@ impl Connection {
         frame::write_frame(&mut self.writer, &self.magic, f).await
     }
 
-    /// Get the peer's specification from the handshake.
     pub fn peer_spec(&self) -> &PeerSpec {
         &self.peer_spec
     }
 
-    /// Split the connection into separate read and write halves.
     pub fn split(self) -> (BufReader<OwnedReadHalf>, OwnedWriteHalf, [u8; 4], PeerSpec) {
         (self.reader, self.writer, self.magic, self.peer_spec)
     }
 }
 
-/// Read a handshake by accumulating TCP segments until parsing succeeds.
+/// Read a handshake by accumulating TCP segments via the BufReader.
 ///
-/// Reads from the raw `OwnedReadHalf` before it's wrapped in `BufReader`.
-/// During handshake, no frame data can arrive — both sides block until
-/// handshake completes — so there are no excess bytes to worry about.
-async fn read_handshake_raw(read_half: &mut OwnedReadHalf) -> io::Result<PeerSpec> {
+/// TCP may deliver the handshake across multiple segments, especially over
+/// the internet. BufReader::fill_buf() only returns cached data without
+/// re-reading if there's unconsumed data. We use read() into a local Vec
+/// to accumulate, then on success, we "unread" the excess bytes by putting
+/// them back into the BufReader's stream via a workaround: we DON'T use
+/// the accumulated bytes directly — instead we consume only the handshake
+/// portion from the BufReader and leave excess for frame reading.
+///
+/// Strategy: read byte-by-byte from the BufReader until parse succeeds.
+/// This is slow but handshakes are small (~200 bytes) and happen once per
+/// connection. The BufReader retains any excess bytes internally.
+async fn read_handshake(reader: &mut BufReader<OwnedReadHalf>) -> io::Result<PeerSpec> {
     let mut buf = Vec::with_capacity(256);
-    let mut tmp = [0u8; 1024];
 
     loop {
-        let n = read_half.read(&mut tmp).await?;
-        if n == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::ConnectionReset,
-                "Connection closed during handshake",
-            ));
+        // Read one byte at a time from the BufReader.
+        // This lets the BufReader manage its internal buffer — excess bytes
+        // (from the first P2P frame) stay in the buffer for read_frame.
+        let mut byte = [0u8; 1];
+        match reader.read(&mut byte).await? {
+            0 => {
+                if buf.is_empty() {
+                    return Err(io::Error::new(io::ErrorKind::ConnectionReset, "Empty handshake"));
+                }
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Incomplete handshake"));
+            }
+            _ => buf.push(byte[0]),
         }
-        buf.extend_from_slice(&tmp[..n]);
 
         if buf.len() > HANDSHAKE_MAX_SIZE {
             return Err(io::Error::new(

@@ -319,3 +319,42 @@ pub fn is_proxy(spec: &PeerSpec) -> bool {
     spec.features.iter().any(|f| f.id == FEATURE_PROXY)
 }
 
+/// Measure the exact byte size of a handshake by parsing it with a cursor.
+pub fn measure_size(data: &[u8]) -> io::Result<usize> {
+    let mut cursor = Cursor::new(data);
+
+    vlq::read_vlq(&mut cursor)?; // timestamp
+    vlq::read_short_string(&mut cursor)?; // agent name
+
+    let mut ver = [0u8; 3];
+    cursor.read_exact(&mut ver)?; // version
+
+    vlq::read_short_string(&mut cursor)?; // peer name
+
+    // Declared address
+    let mut has_addr = [0u8; 1];
+    cursor.read_exact(&mut has_addr)?;
+    if has_addr[0] != 0 {
+        let mut addr_len_byte = [0u8; 1];
+        cursor.read_exact(&mut addr_len_byte)?;
+        let ip_len = (addr_len_byte[0] as usize).saturating_sub(4);
+        let mut ip_bytes = vec![0u8; ip_len];
+        cursor.read_exact(&mut ip_bytes)?;
+        vlq::read_vlq(&mut cursor)?; // port
+    }
+
+    // Features
+    let mut feat_count_buf = [0u8; 1];
+    cursor.read_exact(&mut feat_count_buf)?;
+    let feat_count = feat_count_buf[0] as usize;
+    for _ in 0..feat_count {
+        let mut fid = [0u8; 1];
+        cursor.read_exact(&mut fid)?;
+        let flen = vlq::read_vlq_length(&mut cursor)?;
+        let mut fbody = vec![0u8; flen];
+        cursor.read_exact(&mut fbody)?;
+    }
+
+    Ok(cursor.position() as usize)
+}
+
