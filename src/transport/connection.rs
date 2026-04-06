@@ -136,7 +136,13 @@ async fn read_handshake(reader: &mut BufReader<OwnedReadHalf>) -> io::Result<Pee
         }
 
         match handshake::parse(&buf) {
-            Ok(spec) => return Ok(spec),
+            Ok(spec) => {
+                tracing::debug!(
+                    handshake_bytes = buf.len(),
+                    "handshake parsed successfully"
+                );
+                return Ok(spec);
+            }
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => continue,
             Err(e) => return Err(e),
         }
