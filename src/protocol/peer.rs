@@ -11,6 +11,7 @@
 use crate::protocol::messages::ProtocolMessage;
 use crate::transport::handshake::PeerSpec;
 use crate::types::{Direction, PeerId};
+use std::net::SocketAddr;
 
 /// Peer connection states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +30,7 @@ pub enum ProtocolEvent {
         peer_id: PeerId,
         spec: PeerSpec,
         direction: Direction,
+        addr: SocketAddr,
     },
     PeerDisconnected {
         peer_id: PeerId,
@@ -99,7 +101,7 @@ impl PeerStateMachine {
     /// # Contract
     /// - Precondition: state is Handshaking.
     /// - Postcondition: state is Active, PeerConnected event is returned.
-    pub fn set_active(&mut self, spec: PeerSpec) -> ProtocolEvent {
+    pub fn set_active(&mut self, spec: PeerSpec, addr: SocketAddr) -> ProtocolEvent {
         debug_assert_eq!(self.state, PeerState::Handshaking);
         self.spec = Some(spec.clone());
         self.state = PeerState::Active;
@@ -107,6 +109,7 @@ impl PeerStateMachine {
             peer_id: self.peer_id,
             spec,
             direction: self.direction,
+            addr,
         }
     }
 

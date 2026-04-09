@@ -2,14 +2,19 @@ use enr_p2p::protocol::messages::ProtocolMessage;
 use enr_p2p::protocol::peer::ProtocolEvent;
 use enr_p2p::routing::router::{Action, Router};
 use enr_p2p::types::{Direction, PeerId, ProxyMode};
+use std::net::SocketAddr;
+
+fn dummy_addr() -> SocketAddr {
+    "127.0.0.1:9000".parse().unwrap()
+}
 
 #[test]
 fn full_tx_relay_scenario() {
     let mut router = Router::new();
     let outbound = PeerId(1);
     let inbound = PeerId(2);
-    router.register_peer(outbound, Direction::Outbound, ProxyMode::Full);
-    router.register_peer(inbound, Direction::Inbound, ProxyMode::Full);
+    router.register_peer(outbound, Direction::Outbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(inbound, Direction::Inbound, ProxyMode::Full, dummy_addr());
 
     let tx_id = [0x42; 32];
 
@@ -48,9 +53,9 @@ fn disconnect_cleanup_scenario() {
     let out1 = PeerId(1);
     let out2 = PeerId(2);
     let inb = PeerId(3);
-    router.register_peer(out1, Direction::Outbound, ProxyMode::Full);
-    router.register_peer(out2, Direction::Outbound, ProxyMode::Full);
-    router.register_peer(inb, Direction::Inbound, ProxyMode::Full);
+    router.register_peer(out1, Direction::Outbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(out2, Direction::Outbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(inb, Direction::Inbound, ProxyMode::Full, dummy_addr());
 
     let tx_id = [0x55; 32];
 
@@ -78,10 +83,10 @@ fn disconnect_cleanup_scenario() {
 fn inv_fanout_scenario() {
     let mut router = Router::new();
     let outbound = PeerId(1);
-    router.register_peer(outbound, Direction::Outbound, ProxyMode::Full);
+    router.register_peer(outbound, Direction::Outbound, ProxyMode::Full, dummy_addr());
 
     for i in 2..=5 {
-        router.register_peer(PeerId(i), Direction::Inbound, ProxyMode::Full);
+        router.register_peer(PeerId(i), Direction::Inbound, ProxyMode::Full, dummy_addr());
     }
 
     let actions = router.handle_event(ProtocolEvent::Message {
@@ -95,8 +100,8 @@ fn inv_fanout_scenario() {
 #[test]
 fn light_mode_blocks_sync() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Light);
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Light, dummy_addr());
 
     let actions = router.handle_event(ProtocolEvent::Message {
         peer_id: PeerId(2),
@@ -108,8 +113,8 @@ fn light_mode_blocks_sync() {
 #[test]
 fn full_mode_sync_flow() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
 
     let actions = router.handle_event(ProtocolEvent::Message {
         peer_id: PeerId(2),

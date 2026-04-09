@@ -16,6 +16,7 @@ use crate::transport::handshake::{self, HandshakeConfig};
 use crate::types::{Direction, PeerId, ProxyMode, Version};
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
@@ -211,6 +212,16 @@ impl P2pNode {
         rx
     }
 
+    /// Look up the socket address of a connected peer.
+    pub async fn peer_addr(&self, peer_id: PeerId) -> Option<SocketAddr> {
+        self.router.lock().await.peer_addr(peer_id)
+    }
+
+    /// Force-disconnect a peer by dropping its write channel.
+    pub async fn disconnect_peer(&self, peer_id: PeerId) {
+        self.peer_senders.lock().await.remove(&peer_id);
+    }
+
     /// Register a message code as consumed by the caller's event stream.
     /// Unknown messages with this code will not be forwarded to peers.
     pub async fn register_consumed_code(&self, code: u8) {
@@ -281,6 +292,7 @@ async fn run_peer(
     conn: Connection,
     direction: Direction,
     mode: ProxyMode,
+    addr: SocketAddr,
     event_tx: mpsc::Sender<ProtocolEvent>,
     peer_senders: Arc<Mutex<HashMap<PeerId, PeerSender>>>,
     router: Arc<Mutex<Router>>,
@@ -296,17 +308,18 @@ async fn run_peer(
     );
 
     // Register peer in router
-    router.lock().await.register_peer(peer_id, direction, mode);
+    router.lock().await.register_peer(peer_id, direction, mode, addr);
 
     // Send PeerConnected event
     let _ = event_tx.send(ProtocolEvent::PeerConnected {
         peer_id,
         spec: spec.clone(),
         direction,
+        addr,
     }).await;
 
     // Split connection for concurrent read/write
-    let (mut reader, mut writer, magic, _) = conn.split();
+    let (mut reader, mut writer, magic, _, _) = conn.split();
 
     // Create write channel
     let (write_tx, mut write_rx) = mpsc::channel::<Frame>(64);
@@ -324,7 +337,7 @@ async fn run_peer(
 
     // Reader loop
     loop {
-        match crate::transport::frame::read_frame(&mut reader, &magic).await {
+        match crate::transport::frame::read_frame(&mut reader, &magic, addr).await {
             Ok(frame) => {
                 match ProtocolMessage::from_frame(&frame) {
                     Ok(msg) => {
@@ -334,7 +347,7 @@ async fn run_peer(
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(peer = %peer_id, error = %e, "Message parse failed");
+                        tracing::warn!("PENALTY peer_ip={} type=misbehavior reason=\"message parse failed: {}\"", addr.ip(), e);
                     }
                 }
             }
@@ -391,7 +404,7 @@ async fn accept_loop(
                 let remote_ip = addr.ip();
                 let inbound_count = router.lock().await.inbound_peers().len();
                 if inbound_count >= max_inbound {
-                    tracing::warn!(ip = %remote_ip, "F2B_REJECT connection limit exceeded");
+                    tracing::warn!("PENALTY peer_ip={} type=misbehavior reason=\"connection limit exceeded\"", remote_ip);
                     continue;
                 }
 
@@ -414,10 +427,10 @@ async fn accept_loop(
                 tokio::spawn(async move {
                     match Connection::inbound(stream, &hs).await {
                         Ok(conn) => {
-                            run_peer(peer_id, conn, Direction::Inbound, mode, event_tx, peer_senders, router).await;
+                            run_peer(peer_id, conn, Direction::Inbound, mode, addr, event_tx, peer_senders, router).await;
                         }
                         Err(e) => {
-                            tracing::warn!(ip = %remote_ip, error = %e, "F2B_HANDSHAKE_FAIL bad handshake");
+                            tracing::warn!("PENALTY peer_ip={} type=permanent reason=\"handshake failed: {}\"", addr.ip(), e);
                         }
                     }
                 });
@@ -479,7 +492,7 @@ async fn outbound_manager(
                                         return;
                                     }
                                     tracing::info!(peer = %peer_id, "Outbound handshake OK");
-                                    run_peer(peer_id, conn, Direction::Outbound, mode, event_tx, peer_senders, router).await;
+                                    run_peer(peer_id, conn, Direction::Outbound, mode, addr, event_tx, peer_senders, router).await;
                                 }
                                 Err(e) => {
                                     tracing::warn!(peer = %peer_id, addr = %addr, error = %e, "Outbound handshake failed");
@@ -507,6 +520,10 @@ async fn outbound_manager(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn dummy_addr() -> SocketAddr {
+        "127.0.0.1:9000".parse().unwrap()
+    }
 
     /// Build a P2pNode with no background tasks — just the struct with shared state.
     fn test_node() -> (P2pNode, Arc<Mutex<Router>>, Arc<Mutex<HashMap<PeerId, PeerSender>>>) {
@@ -566,9 +583,9 @@ mod tests {
         let peer_b = PeerId(2);
         let peer_inbound = PeerId(3);
 
-        router.lock().await.register_peer(peer_a, Direction::Outbound, ProxyMode::Full);
-        router.lock().await.register_peer(peer_b, Direction::Outbound, ProxyMode::Full);
-        router.lock().await.register_peer(peer_inbound, Direction::Inbound, ProxyMode::Full);
+        router.lock().await.register_peer(peer_a, Direction::Outbound, ProxyMode::Full, dummy_addr());
+        router.lock().await.register_peer(peer_b, Direction::Outbound, ProxyMode::Full, dummy_addr());
+        router.lock().await.register_peer(peer_inbound, Direction::Inbound, ProxyMode::Full, dummy_addr());
 
         let (tx_a, mut rx_a) = mpsc::channel::<Frame>(64);
         let (tx_b, mut rx_b) = mpsc::channel::<Frame>(64);
@@ -596,8 +613,8 @@ mod tests {
         let peer_ok = PeerId(1);
         let peer_full = PeerId(2);
 
-        router.lock().await.register_peer(peer_ok, Direction::Outbound, ProxyMode::Full);
-        router.lock().await.register_peer(peer_full, Direction::Outbound, ProxyMode::Full);
+        router.lock().await.register_peer(peer_ok, Direction::Outbound, ProxyMode::Full, dummy_addr());
+        router.lock().await.register_peer(peer_full, Direction::Outbound, ProxyMode::Full, dummy_addr());
 
         let (tx_ok, mut rx_ok) = mpsc::channel::<Frame>(64);
         // Capacity 1: one fill + one broadcast = second is dropped
@@ -648,7 +665,7 @@ mod tests {
         });
 
         // Register a peer so the router doesn't choke
-        router.lock().await.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+        router.lock().await.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
 
         // Send a protocol event
         event_tx.send(ProtocolEvent::Message {

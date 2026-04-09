@@ -11,6 +11,7 @@
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use std::io;
+use std::net::SocketAddr;
 
 type Blake2b256 = Blake2b<U32>;
 
@@ -115,6 +116,7 @@ pub fn decode(magic: &[u8; 4], data: &[u8]) -> io::Result<Frame> {
 pub async fn read_frame(
     reader: &mut (impl tokio::io::AsyncReadExt + Unpin),
     magic: &[u8; 4],
+    peer_addr: SocketAddr,
 ) -> io::Result<Frame> {
     // Read fixed prefix: magic(4) + code(1) + length(4) = 9 bytes.
     // Checksum(4) follows only when body length > 0 (JVM omits it for empty bodies).
@@ -127,6 +129,7 @@ pub async fn read_frame(
             expected = format!("{:02x}{:02x}{:02x}{:02x}", magic[0], magic[1], magic[2], magic[3]),
             "Frame magic mismatch — stream likely misaligned"
         );
+        tracing::warn!("PENALTY peer_ip={} type=permanent reason=\"bad magic bytes\"", peer_addr.ip());
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Bad magic: {:?} (expected {:?})", &prefix[0..4], magic),
@@ -137,6 +140,7 @@ pub async fn read_frame(
     let body_len = u32::from_be_bytes([prefix[5], prefix[6], prefix[7], prefix[8]]);
 
     if body_len > MAX_BODY_SIZE {
+        tracing::warn!("PENALTY peer_ip={} type=permanent reason=\"oversized frame\"", peer_addr.ip());
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Body too large: {} bytes", body_len),
@@ -164,6 +168,7 @@ pub async fn read_frame(
             computed = format!("{:02x}{:02x}{:02x}{:02x}", hash[0], hash[1], hash[2], hash[3]),
             "Checksum mismatch"
         );
+        tracing::warn!("PENALTY peer_ip={} type=permanent reason=\"bad checksum\"", peer_addr.ip());
         return Err(io::Error::new(io::ErrorKind::InvalidData, "Checksum mismatch"));
     }
 

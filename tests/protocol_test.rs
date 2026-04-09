@@ -115,6 +115,11 @@ fn inv_to_frame_roundtrip() {
 use enr_p2p::protocol::peer::{PeerState, PeerStateMachine, ProtocolEvent};
 use enr_p2p::types::{PeerId, Direction, Version};
 use enr_p2p::transport::handshake::PeerSpec;
+use std::net::SocketAddr;
+
+fn dummy_addr() -> SocketAddr {
+    "127.0.0.1:9000".parse().unwrap()
+}
 
 #[test]
 fn peer_starts_connecting() {
@@ -140,7 +145,7 @@ fn peer_transitions_to_active() {
         address: None,
         features: vec![],
     };
-    let event = peer.set_active(spec);
+    let event = peer.set_active(spec, dummy_addr());
     assert_eq!(peer.state(), PeerState::Active);
     match event {
         ProtocolEvent::PeerConnected { peer_id, direction, .. } => {
@@ -162,7 +167,7 @@ fn peer_transitions_to_disconnected() {
         address: None,
         features: vec![],
     };
-    peer.set_active(spec);
+    peer.set_active(spec, dummy_addr());
     let event = peer.set_disconnected("test reason".into());
     assert_eq!(peer.state(), PeerState::Disconnected);
     match event {

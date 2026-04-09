@@ -11,6 +11,7 @@
 use crate::transport::frame::{self, Frame};
 use crate::transport::handshake::{self, HandshakeConfig, PeerSpec};
 use std::io;
+use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -25,6 +26,7 @@ pub struct Connection {
     writer: OwnedWriteHalf,
     magic: [u8; 4],
     peer_spec: PeerSpec,
+    peer_addr: SocketAddr,
 }
 
 impl Connection {
@@ -34,6 +36,7 @@ impl Connection {
         config: &HandshakeConfig,
     ) -> io::Result<Self> {
         let magic = config.network.magic();
+        let peer_addr = stream.peer_addr()?;
         let (read_half, mut write_half) = stream.into_split();
         let mut reader = BufReader::new(read_half);
 
@@ -50,7 +53,7 @@ impl Connection {
         handshake::validate_peer(&peer_spec, &config.network)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        Ok(Self { reader, writer: write_half, magic, peer_spec })
+        Ok(Self { reader, writer: write_half, magic, peer_spec, peer_addr })
     }
 
     /// Accept a connection by performing the handshake as responder (inbound).
@@ -59,6 +62,7 @@ impl Connection {
         config: &HandshakeConfig,
     ) -> io::Result<Self> {
         let magic = config.network.magic();
+        let peer_addr = stream.peer_addr()?;
         let (read_half, mut write_half) = stream.into_split();
         let mut reader = BufReader::new(read_half);
 
@@ -75,12 +79,12 @@ impl Connection {
         write_half.write_all(&hs_bytes).await?;
         write_half.flush().await?;
 
-        Ok(Self { reader, writer: write_half, magic, peer_spec })
+        Ok(Self { reader, writer: write_half, magic, peer_spec, peer_addr })
     }
 
     /// Read the next message frame.
     pub async fn read_frame(&mut self) -> io::Result<Frame> {
-        frame::read_frame(&mut self.reader, &self.magic).await
+        frame::read_frame(&mut self.reader, &self.magic, self.peer_addr).await
     }
 
     /// Write a message frame.
@@ -92,8 +96,12 @@ impl Connection {
         &self.peer_spec
     }
 
-    pub fn split(self) -> (BufReader<OwnedReadHalf>, OwnedWriteHalf, [u8; 4], PeerSpec) {
-        (self.reader, self.writer, self.magic, self.peer_spec)
+    pub fn peer_addr(&self) -> SocketAddr {
+        self.peer_addr
+    }
+
+    pub fn split(self) -> (BufReader<OwnedReadHalf>, OwnedWriteHalf, [u8; 4], PeerSpec, SocketAddr) {
+        (self.reader, self.writer, self.magic, self.peer_spec, self.peer_addr)
     }
 }
 

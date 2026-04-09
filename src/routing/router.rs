@@ -15,6 +15,7 @@ use crate::routing::latency::{LatencyTracker, LatencyStats};
 use crate::routing::tracker::{RequestTracker, SyncTracker};
 use crate::types::{Direction, PeerId, ProxyMode};
 use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
 use std::time::Duration;
 
 /// A routing directive.
@@ -35,6 +36,7 @@ pub enum Action {
 struct PeerEntry {
     direction: Direction,
     mode: ProxyMode,
+    addr: SocketAddr,
 }
 
 pub struct Router {
@@ -66,8 +68,12 @@ impl Router {
         self.consumed_codes.insert(code);
     }
 
-    pub fn register_peer(&mut self, peer_id: PeerId, direction: Direction, mode: ProxyMode) {
-        self.peers.insert(peer_id, PeerEntry { direction, mode });
+    pub fn register_peer(&mut self, peer_id: PeerId, direction: Direction, mode: ProxyMode, addr: SocketAddr) {
+        self.peers.insert(peer_id, PeerEntry { direction, mode, addr });
+    }
+
+    pub fn peer_addr(&self, peer_id: PeerId) -> Option<SocketAddr> {
+        self.peers.get(&peer_id).map(|e| e.addr)
     }
 
     pub fn handle_event(&mut self, event: ProtocolEvent) -> Vec<Action> {
