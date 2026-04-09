@@ -121,6 +121,46 @@ fn sync_tracker_purge_outbound() {
     assert_eq!(tracker.inbound_for(&PeerId(10)), None);
 }
 
+// --- RequestTracker expiry tests ---
+
+#[test]
+fn request_tracker_sweep_expired_removes_stale_entries() {
+    use std::time::Duration;
+    use std::thread;
+
+    let mut tracker = RequestTracker::new();
+    tracker.record([0xaa; 32], PeerId(1));
+    tracker.record([0xbb; 32], PeerId(2));
+
+    // Both entries should survive a sweep with a generous TTL
+    tracker.sweep_expired(Duration::from_secs(60));
+    assert_eq!(tracker.lookup(&[0xaa; 32]), Some(PeerId(1)));
+    assert_eq!(tracker.lookup(&[0xbb; 32]), Some(PeerId(2)));
+
+    // Wait just over the TTL, then sweep
+    thread::sleep(Duration::from_millis(50));
+    tracker.sweep_expired(Duration::from_millis(25));
+    assert_eq!(tracker.lookup(&[0xaa; 32]), None);
+    assert_eq!(tracker.lookup(&[0xbb; 32]), None);
+}
+
+#[test]
+fn request_tracker_sweep_preserves_fresh_entries() {
+    use std::time::Duration;
+    use std::thread;
+
+    let mut tracker = RequestTracker::new();
+    tracker.record([0xaa; 32], PeerId(1));
+    thread::sleep(Duration::from_millis(50));
+    // Record a fresh entry after sleeping
+    tracker.record([0xbb; 32], PeerId(2));
+
+    // Sweep with TTL that kills the old one but spares the new one
+    tracker.sweep_expired(Duration::from_millis(25));
+    assert_eq!(tracker.lookup(&[0xaa; 32]), None);
+    assert_eq!(tracker.lookup(&[0xbb; 32]), Some(PeerId(2)));
+}
+
 // --- Router tests ---
 
 use enr_p2p::routing::router::{Router, Action};
@@ -390,4 +430,66 @@ fn router_fallback_request_response_reaches_requester() {
         _ => None,
     }).collect();
     assert_eq!(targets, vec![PeerId(2)], "response should route back to original requester");
+}
+
+// --- Consumed-code routing tests ---
+
+#[test]
+fn router_consumed_code_suppresses_forwarding() {
+    let mut router = Router::new();
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+    router.register_consumed_code(76); // snapshot manifest
+
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::Unknown { code: 76, body: vec![1, 2, 3] },
+    });
+    assert!(actions.is_empty(), "consumed code should not produce Send actions");
+}
+
+#[test]
+fn router_unregistered_code_still_forwards() {
+    let mut router = Router::new();
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+    router.register_consumed_code(76);
+
+    // Code 99 is NOT consumed — should forward normally
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::Unknown { code: 99, body: vec![1, 2, 3] },
+    });
+    let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
+        Action::Send { target, .. } => Some(*target),
+        _ => None,
+    }).collect();
+    assert_eq!(targets, vec![PeerId(2)]);
+}
+
+#[test]
+fn router_multiple_consumed_codes() {
+    let mut router = Router::new();
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+
+    for code in [76, 78, 80, 90, 91] {
+        router.register_consumed_code(code);
+    }
+
+    // All consumed codes should be suppressed
+    for code in [76, 78, 80, 90, 91] {
+        let actions = router.handle_event(ProtocolEvent::Message {
+            peer_id: PeerId(1),
+            message: ProtocolMessage::Unknown { code, body: vec![] },
+        });
+        assert!(actions.is_empty(), "consumed code {} should be suppressed", code);
+    }
+
+    // Non-consumed code should still forward
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::Unknown { code: 55, body: vec![] },
+    });
+    assert!(!actions.is_empty(), "non-consumed code should forward");
 }

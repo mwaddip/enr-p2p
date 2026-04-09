@@ -15,6 +15,7 @@
 
 use crate::types::{ModifierId, PeerId};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 /// Hard cap on pending requests. At ~40 bytes per entry, 50K ≈ 2MB.
 const MAX_PENDING: usize = 50_000;
@@ -23,7 +24,7 @@ const MAX_PENDING: usize = 50_000;
 const EVICT_FRACTION: usize = 4;
 
 pub struct RequestTracker {
-    pending: HashMap<ModifierId, PeerId>,
+    pending: HashMap<ModifierId, (PeerId, Instant)>,
 }
 
 impl RequestTracker {
@@ -35,7 +36,7 @@ impl RequestTracker {
         if self.pending.len() >= MAX_PENDING {
             self.evict();
         }
-        self.pending.insert(modifier_id, requester);
+        self.pending.insert(modifier_id, (requester, Instant::now()));
     }
 
     /// Bulk-evict ~25% of entries. Evicted requests will never be fulfilled
@@ -49,12 +50,22 @@ impl RequestTracker {
         }
     }
 
+    pub fn lookup(&self, modifier_id: &ModifierId) -> Option<PeerId> {
+        self.pending.get(modifier_id).map(|(peer, _)| *peer)
+    }
+
     pub fn fulfill(&mut self, modifier_id: &ModifierId) -> Option<PeerId> {
-        self.pending.remove(modifier_id)
+        self.pending.remove(modifier_id).map(|(peer, _)| peer)
+    }
+
+    /// Remove entries older than `max_age`. Called periodically by the router.
+    pub fn sweep_expired(&mut self, max_age: Duration) {
+        let cutoff = Instant::now() - max_age;
+        self.pending.retain(|_, (_, ts)| *ts > cutoff);
     }
 
     pub fn purge_peer(&mut self, peer: PeerId) {
-        self.pending.retain(|_, p| *p != peer);
+        self.pending.retain(|_, (p, _)| *p != peer);
     }
 }
 

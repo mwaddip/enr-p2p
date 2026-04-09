@@ -14,7 +14,8 @@ use crate::routing::inv_table::InvTable;
 use crate::routing::latency::{LatencyTracker, LatencyStats};
 use crate::routing::tracker::{RequestTracker, SyncTracker};
 use crate::types::{Direction, PeerId, ProxyMode};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 /// A routing directive.
 #[derive(Debug)]
@@ -42,6 +43,9 @@ pub struct Router {
     request_tracker: RequestTracker,
     sync_tracker: SyncTracker,
     latency_tracker: LatencyTracker,
+    /// Message codes handled by the main crate via the event stream.
+    /// Unknown messages with these codes are not forwarded to peers.
+    consumed_codes: HashSet<u8>,
 }
 
 impl Router {
@@ -52,7 +56,14 @@ impl Router {
             request_tracker: RequestTracker::new(),
             sync_tracker: SyncTracker::new(),
             latency_tracker: LatencyTracker::new(),
+            consumed_codes: HashSet::new(),
         }
+    }
+
+    /// Register a message code as consumed by the main crate's event stream.
+    /// Unknown messages with this code will not be forwarded to peers.
+    pub fn register_consumed_code(&mut self, code: u8) {
+        self.consumed_codes.insert(code);
     }
 
     pub fn register_peer(&mut self, peer_id: PeerId, direction: Direction, mode: ProxyMode) {
@@ -81,6 +92,8 @@ impl Router {
     }
 
     fn route_message(&mut self, source: PeerId, message: ProtocolMessage) -> Vec<Action> {
+        self.request_tracker.sweep_expired(Duration::from_secs(60));
+
         let source_entry = match self.peers.get(&source) {
             Some(e) => e,
             None => return vec![],
@@ -212,6 +225,10 @@ impl Router {
             }
 
             ProtocolMessage::Unknown { code, body } => {
+                if self.consumed_codes.contains(&code) {
+                    return vec![];
+                }
+
                 let target_direction = match source_direction {
                     Direction::Outbound => Direction::Inbound,
                     Direction::Inbound => Direction::Outbound,
