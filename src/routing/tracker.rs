@@ -25,15 +25,24 @@ const EVICT_FRACTION: usize = 4;
 
 pub struct RequestTracker {
     pending: HashMap<ModifierId, (PeerId, Instant)>,
+    max_pending: usize,
 }
 
 impl RequestTracker {
     pub fn new() -> Self {
-        Self { pending: HashMap::new() }
+        Self { pending: HashMap::new(), max_pending: MAX_PENDING }
+    }
+
+    pub fn with_capacity(cap: usize) -> Self {
+        Self { pending: HashMap::new(), max_pending: cap }
+    }
+
+    pub fn len(&self) -> usize {
+        self.pending.len()
     }
 
     pub fn record(&mut self, modifier_id: ModifierId, requester: PeerId) {
-        if self.pending.len() >= MAX_PENDING {
+        if self.pending.len() >= self.max_pending {
             self.evict();
         }
         self.pending.insert(modifier_id, (requester, Instant::now()));
