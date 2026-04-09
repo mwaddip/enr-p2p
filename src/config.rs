@@ -9,6 +9,9 @@ pub struct Config {
     pub outbound: OutboundConfig,
     pub identity: IdentityConfig,
     pub network: Option<NetworkConfig>,
+    /// UPnP port mapping configuration. Defaults to disabled.
+    #[serde(default)]
+    pub upnp: UpnpConfig,
 }
 
 /// Network-level settings matching the JVM's `scorex.network` config.
@@ -39,6 +42,28 @@ pub struct NetworkConfig {
     /// Default temporary ban duration in minutes.
     #[serde(default = "default_temporal_ban_duration")]
     pub temporal_ban_duration_mins: u64,
+}
+
+/// UPnP configuration. IPv4 only — IPv6 addresses are globally routable.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpnpConfig {
+    /// Enable UPnP port mapping discovery. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Gateway discovery timeout in seconds. Default: 5.
+    #[serde(default = "default_discover_timeout")]
+    pub discover_timeout_secs: u64,
+}
+
+fn default_discover_timeout() -> u64 { 5 }
+
+impl Default for UpnpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            discover_timeout_secs: default_discover_timeout(),
+        }
+    }
 }
 
 fn default_get_peers_interval() -> u64 { 120 }
@@ -139,5 +164,54 @@ impl Config {
             return Err(format!("Invalid version: {}", self.identity.protocol_version).into());
         }
         Ok((parts[0].parse()?, parts[1].parse()?, parts[2].parse()?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Minimal valid TOML without a [upnp] section — upnp should default to disabled.
+    const MINIMAL_TOML: &str = r#"
+[proxy]
+network = "testnet"
+
+[listen.ipv4]
+address = "0.0.0.0:9020"
+mode = "full"
+max_inbound = 10
+
+[outbound]
+min_peers = 1
+max_peers = 5
+seed_peers = ["213.239.193.208:9030"]
+
+[identity]
+agent_name = "ergo-test"
+peer_name = "test-node"
+protocol_version = "5.0.25"
+"#;
+
+    #[test]
+    fn upnp_defaults_to_disabled_when_absent() {
+        let config: Config = toml::from_str(MINIMAL_TOML).unwrap();
+        assert!(!config.upnp.enabled);
+        assert_eq!(config.upnp.discover_timeout_secs, 5);
+    }
+
+    #[test]
+    fn upnp_enabled_from_toml() {
+        let toml_str = format!("{}\n[upnp]\nenabled = true\ndiscover_timeout_secs = 10\n", MINIMAL_TOML);
+        let config: Config = toml::from_str(&toml_str).unwrap();
+        assert!(config.upnp.enabled);
+        assert_eq!(config.upnp.discover_timeout_secs, 10);
+    }
+
+    #[test]
+    fn upnp_enabled_uses_default_timeout() {
+        let toml_str = format!("{}\n[upnp]\nenabled = true\n", MINIMAL_TOML);
+        let config: Config = toml::from_str(&toml_str).unwrap();
+        assert!(config.upnp.enabled);
+        assert_eq!(config.upnp.discover_timeout_secs, 5);
     }
 }

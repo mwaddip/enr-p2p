@@ -14,6 +14,7 @@ use crate::transport::connection::Connection;
 use crate::transport::frame::Frame;
 use crate::transport::handshake::{self, HandshakeConfig};
 use crate::types::{Direction, PeerId, ProxyMode, Version};
+use crate::upnp::UpnpMapping;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -55,6 +56,7 @@ pub struct P2pNode {
     router: Arc<Mutex<Router>>,
     peer_senders: Arc<Mutex<HashMap<PeerId, PeerSender>>>,
     subscriber: Arc<Mutex<Option<mpsc::Sender<ProtocolEvent>>>>,
+    upnp_mapping: Option<UpnpMapping>,
 }
 
 impl P2pNode {
@@ -87,11 +89,34 @@ impl P2pNode {
         let subscriber: Arc<Mutex<Option<mpsc::Sender<ProtocolEvent>>>> =
             Arc::new(Mutex::new(None));
 
+        // Discover external addresses before starting listeners.
+        // UPnP for IPv4 (NAT traversal), interface enumeration for IPv6 (globally routable).
+        let mut upnp_mapping: Option<UpnpMapping> = None;
+        let mut ipv4_declared: Option<SocketAddr> = None;
+        let mut ipv6_declared: Option<SocketAddr> = None;
+
+        if config.upnp.enabled {
+            if let Some(ref listener_cfg) = config.listen.ipv4 {
+                if let Some(mapping) = crate::upnp::attempt(
+                    &config.upnp,
+                    listener_cfg.address.port(),
+                    listener_cfg.address,
+                ).await {
+                    ipv4_declared = Some(mapping.external_addr);
+                    upnp_mapping = Some(mapping);
+                }
+            }
+        }
+
+        if let Some(ref listener_cfg) = config.listen.ipv6 {
+            ipv6_declared = crate::netif::find_global_ipv6(listener_cfg.address.port());
+        }
+
         // Start listeners
         if let Some(ref listener_cfg) = config.listen.ipv6 {
             let listener = TcpListener::bind(listener_cfg.address).await?;
-            tracing::info!(addr = %listener_cfg.address, mode = ?listener_cfg.mode, "IPv6 listener started");
-            let hs_config = make_handshake_config(&config.identity, version, network, listener_cfg.mode, mode_config);
+            tracing::info!(addr = %listener_cfg.address, mode = ?listener_cfg.mode, declared = ?ipv6_declared, "IPv6 listener started");
+            let hs_config = make_handshake_config(&config.identity, version, network, listener_cfg.mode, mode_config, ipv6_declared);
             tokio::spawn(accept_loop(
                 listener, hs_config, listener_cfg.mode, listener_cfg.max_inbound,
                 event_tx.clone(), peer_senders.clone(), router.clone(), peer_counter.clone(),
@@ -100,17 +125,18 @@ impl P2pNode {
 
         if let Some(ref listener_cfg) = config.listen.ipv4 {
             let listener = TcpListener::bind(listener_cfg.address).await?;
-            tracing::info!(addr = %listener_cfg.address, mode = ?listener_cfg.mode, "IPv4 listener started");
-            let hs_config = make_handshake_config(&config.identity, version, network, listener_cfg.mode, mode_config);
+            tracing::info!(addr = %listener_cfg.address, mode = ?listener_cfg.mode, declared = ?ipv4_declared, "IPv4 listener started");
+            let hs_config = make_handshake_config(&config.identity, version, network, listener_cfg.mode, mode_config, ipv4_declared);
             tokio::spawn(accept_loop(
                 listener, hs_config, listener_cfg.mode, listener_cfg.max_inbound,
                 event_tx.clone(), peer_senders.clone(), router.clone(), peer_counter.clone(),
             ));
         }
 
-        // Start outbound connections
+        // Start outbound connections — prefer IPv4 declared address (most peers are IPv4)
+        let outbound_declared = ipv4_declared.or(ipv6_declared);
         {
-            let hs_config = make_handshake_config(&config.identity, version, network, ProxyMode::Full, mode_config);
+            let hs_config = make_handshake_config(&config.identity, version, network, ProxyMode::Full, mode_config, outbound_declared);
             tokio::spawn(outbound_manager(
                 config.outbound.seed_peers.clone(), config.outbound.min_peers,
                 hs_config, ProxyMode::Full,
@@ -148,7 +174,7 @@ impl P2pNode {
             });
         }
 
-        Ok(P2pNode { router, peer_senders, subscriber })
+        Ok(P2pNode { router, peer_senders, subscriber, upnp_mapping })
     }
 
     /// Number of connected peers (inbound + outbound).
@@ -226,6 +252,18 @@ impl P2pNode {
     /// Unknown messages with this code will not be forwarded to peers.
     pub async fn register_consumed_code(&self, code: u8) {
         self.router.lock().await.register_consumed_code(code);
+    }
+
+    /// Returns the UPnP-discovered external address, if any.
+    pub fn upnp_external_addr(&self) -> Option<SocketAddr> {
+        self.upnp_mapping.as_ref().map(|m| m.external_addr)
+    }
+
+    /// Remove the UPnP port mapping. Call during graceful shutdown.
+    pub async fn shutdown_upnp(&self) {
+        if let Some(ref mapping) = self.upnp_mapping {
+            mapping.remove().await;
+        }
     }
 }
 
@@ -376,6 +414,7 @@ fn make_handshake_config(
     network: crate::types::Network,
     mode: ProxyMode,
     mode_config: handshake::ModeConfig,
+    declared_address: Option<SocketAddr>,
 ) -> HandshakeConfig {
     HandshakeConfig {
         agent_name: identity.agent_name.clone(),
@@ -383,7 +422,7 @@ fn make_handshake_config(
         version,
         network,
         mode,
-        declared_address: None,
+        declared_address,
         mode_config,
     }
 }
@@ -534,6 +573,7 @@ mod tests {
             router: router.clone(),
             peer_senders: peer_senders.clone(),
             subscriber,
+            upnp_mapping: None,
         };
         (node, router, peer_senders)
     }
@@ -650,6 +690,7 @@ mod tests {
             router: router.clone(),
             peer_senders: peer_senders.clone(),
             subscriber: subscriber.clone(),
+            upnp_mapping: None,
         };
 
         let mut events = node.subscribe().await;
