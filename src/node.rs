@@ -210,6 +210,12 @@ impl P2pNode {
         *self.subscriber.lock().await = Some(tx);
         rx
     }
+
+    /// Register a message code as consumed by the caller's event stream.
+    /// Unknown messages with this code will not be forwarded to peers.
+    pub async fn register_consumed_code(&self, code: u8) {
+        self.router.lock().await.register_consumed_code(code);
+    }
 }
 
 async fn event_loop(
