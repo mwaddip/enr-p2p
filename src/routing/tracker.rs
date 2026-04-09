@@ -49,10 +49,6 @@ impl RequestTracker {
         }
     }
 
-    pub fn lookup(&self, modifier_id: &ModifierId) -> Option<PeerId> {
-        self.pending.get(modifier_id).copied()
-    }
-
     pub fn fulfill(&mut self, modifier_id: &ModifierId) -> Option<PeerId> {
         self.pending.remove(modifier_id)
     }

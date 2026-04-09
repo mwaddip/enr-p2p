@@ -74,15 +74,6 @@ impl PeerStateMachine {
         self.spec.as_ref()
     }
 
-    /// Transition to Handshaking.
-    ///
-    /// # Contract
-    /// - Precondition: state is Connecting.
-    pub fn set_handshaking(&mut self) {
-        debug_assert_eq!(self.state, PeerState::Connecting);
-        self.state = PeerState::Handshaking;
-    }
-
     /// Transition to Active. Returns PeerConnected event.
     ///
     /// # Contract
@@ -111,15 +102,6 @@ impl PeerStateMachine {
             peer_id: self.peer_id,
             reason,
         }
-    }
-
-    /// Transition to Failed (from Handshaking).
-    ///
-    /// # Contract
-    /// - Precondition: state is Handshaking.
-    pub fn set_failed(&mut self, _reason: String) {
-        debug_assert_eq!(self.state, PeerState::Handshaking);
-        self.state = PeerState::Failed;
     }
 
     /// Wrap a parsed message into a ProtocolEvent.

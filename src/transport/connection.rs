@@ -11,7 +11,7 @@
 use crate::transport::frame::{self, Frame};
 use crate::transport::handshake::{self, HandshakeConfig, PeerSpec};
 use std::io;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::time::{timeout, Duration};
