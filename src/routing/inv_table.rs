@@ -12,6 +12,12 @@
 use crate::types::{ModifierId, PeerId};
 use std::collections::HashMap;
 
+/// Hard cap on inv table entries. At ~40 bytes per entry, 100K ≈ 4MB.
+const MAX_ENTRIES: usize = 100_000;
+
+/// Fraction of entries to evict when the cap is hit (1/4 = 25%).
+const EVICT_FRACTION: usize = 4;
+
 pub struct InvTable {
     entries: HashMap<ModifierId, PeerId>,
 }
@@ -22,7 +28,20 @@ impl InvTable {
     }
 
     pub fn record(&mut self, modifier_id: ModifierId, peer: PeerId) {
+        if self.entries.len() >= MAX_ENTRIES {
+            self.evict();
+        }
         self.entries.insert(modifier_id, peer);
+    }
+
+    /// Bulk-evict ~25% of entries. HashMap iteration order is arbitrary,
+    /// which is fine — we just need to shed load, not be fair about it.
+    fn evict(&mut self) {
+        let to_remove = self.entries.len() / EVICT_FRACTION;
+        let keys: Vec<ModifierId> = self.entries.keys().take(to_remove).copied().collect();
+        for key in keys {
+            self.entries.remove(&key);
+        }
     }
 
     pub fn lookup(&self, modifier_id: &ModifierId) -> Option<PeerId> {

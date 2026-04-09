@@ -16,6 +16,12 @@
 use crate::types::{ModifierId, PeerId};
 use std::collections::HashMap;
 
+/// Hard cap on pending requests. At ~40 bytes per entry, 50K ≈ 2MB.
+const MAX_PENDING: usize = 50_000;
+
+/// Fraction of entries to evict when the cap is hit (1/4 = 25%).
+const EVICT_FRACTION: usize = 4;
+
 pub struct RequestTracker {
     pending: HashMap<ModifierId, PeerId>,
 }
@@ -26,7 +32,21 @@ impl RequestTracker {
     }
 
     pub fn record(&mut self, modifier_id: ModifierId, requester: PeerId) {
+        if self.pending.len() >= MAX_PENDING {
+            self.evict();
+        }
         self.pending.insert(modifier_id, requester);
+    }
+
+    /// Bulk-evict ~25% of entries. Evicted requests will never be fulfilled
+    /// (the response arrives, nobody to route it to) — acceptable under load
+    /// because the alternative is OOM.
+    fn evict(&mut self) {
+        let to_remove = self.pending.len() / EVICT_FRACTION;
+        let keys: Vec<ModifierId> = self.pending.keys().take(to_remove).copied().collect();
+        for key in keys {
+            self.pending.remove(&key);
+        }
     }
 
     pub fn lookup(&self, modifier_id: &ModifierId) -> Option<PeerId> {
