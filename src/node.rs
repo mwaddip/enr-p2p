@@ -243,6 +243,11 @@ impl P2pNode {
         self.router.lock().await.peer_addr(peer_id)
     }
 
+    /// REST API URLs advertised by connected peers.
+    pub async fn peer_rest_urls(&self) -> Vec<(PeerId, SocketAddr, Option<String>)> {
+        self.router.lock().await.peer_rest_urls()
+    }
+
     /// Force-disconnect a peer by dropping its write channel.
     pub async fn disconnect_peer(&self, peer_id: PeerId) {
         self.peer_senders.lock().await.remove(&peer_id);
@@ -346,7 +351,8 @@ async fn run_peer(
     );
 
     // Register peer in router
-    router.lock().await.register_peer(peer_id, direction, mode, addr);
+    let rest_api_url = spec.rest_api_url();
+    router.lock().await.register_peer(peer_id, direction, mode, addr, rest_api_url);
 
     // Send PeerConnected event
     let _ = event_tx.send(ProtocolEvent::PeerConnected {
@@ -623,9 +629,9 @@ mod tests {
         let peer_b = PeerId(2);
         let peer_inbound = PeerId(3);
 
-        router.lock().await.register_peer(peer_a, Direction::Outbound, ProxyMode::Full, dummy_addr());
-        router.lock().await.register_peer(peer_b, Direction::Outbound, ProxyMode::Full, dummy_addr());
-        router.lock().await.register_peer(peer_inbound, Direction::Inbound, ProxyMode::Full, dummy_addr());
+        router.lock().await.register_peer(peer_a, Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+        router.lock().await.register_peer(peer_b, Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+        router.lock().await.register_peer(peer_inbound, Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
         let (tx_a, mut rx_a) = mpsc::channel::<Frame>(64);
         let (tx_b, mut rx_b) = mpsc::channel::<Frame>(64);
@@ -653,8 +659,8 @@ mod tests {
         let peer_ok = PeerId(1);
         let peer_full = PeerId(2);
 
-        router.lock().await.register_peer(peer_ok, Direction::Outbound, ProxyMode::Full, dummy_addr());
-        router.lock().await.register_peer(peer_full, Direction::Outbound, ProxyMode::Full, dummy_addr());
+        router.lock().await.register_peer(peer_ok, Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+        router.lock().await.register_peer(peer_full, Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
 
         let (tx_ok, mut rx_ok) = mpsc::channel::<Frame>(64);
         // Capacity 1: one fill + one broadcast = second is dropped
@@ -706,7 +712,7 @@ mod tests {
         });
 
         // Register a peer so the router doesn't choke
-        router.lock().await.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
+        router.lock().await.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
 
         // Send a protocol event
         event_tx.send(ProtocolEvent::Message {

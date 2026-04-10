@@ -37,6 +37,7 @@ struct PeerEntry {
     direction: Direction,
     mode: ProxyMode,
     addr: SocketAddr,
+    rest_api_url: Option<String>,
 }
 
 pub struct Router {
@@ -68,12 +69,19 @@ impl Router {
         self.consumed_codes.insert(code);
     }
 
-    pub fn register_peer(&mut self, peer_id: PeerId, direction: Direction, mode: ProxyMode, addr: SocketAddr) {
-        self.peers.insert(peer_id, PeerEntry { direction, mode, addr });
+    pub fn register_peer(&mut self, peer_id: PeerId, direction: Direction, mode: ProxyMode, addr: SocketAddr, rest_api_url: Option<String>) {
+        self.peers.insert(peer_id, PeerEntry { direction, mode, addr, rest_api_url });
     }
 
     pub fn peer_addr(&self, peer_id: PeerId) -> Option<SocketAddr> {
         self.peers.get(&peer_id).map(|e| e.addr)
+    }
+
+    /// REST API URLs for all connected peers.
+    pub fn peer_rest_urls(&self) -> Vec<(PeerId, SocketAddr, Option<String>)> {
+        self.peers.iter()
+            .map(|(pid, entry)| (*pid, entry.addr, entry.rest_api_url.clone()))
+            .collect()
     }
 
     pub fn handle_event(&mut self, event: ProtocolEvent) -> Vec<Action> {

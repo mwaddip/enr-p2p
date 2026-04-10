@@ -176,9 +176,9 @@ use enr_p2p::types::{Direction, ProxyMode};
 #[test]
 fn router_inv_from_outbound_forwards_to_inbound() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(3), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(3), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
     let event = ProtocolEvent::Message {
         peer_id: PeerId(1),
@@ -198,8 +198,8 @@ fn router_inv_from_outbound_forwards_to_inbound() {
 #[test]
 fn router_modifier_request_routes_via_inv_table() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
     router.handle_event(ProtocolEvent::Message {
         peer_id: PeerId(1),
@@ -221,8 +221,8 @@ fn router_modifier_request_routes_via_inv_table() {
 #[test]
 fn router_modifier_response_routes_to_requester() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
     router.handle_event(ProtocolEvent::Message {
         peer_id: PeerId(1),
@@ -251,7 +251,7 @@ fn router_modifier_response_routes_to_requester() {
 #[test]
 fn router_get_peers_handled_directly() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
 
     let actions = router.handle_event(ProtocolEvent::Message {
         peer_id: PeerId(1),
@@ -266,8 +266,8 @@ fn router_get_peers_handled_directly() {
 #[test]
 fn router_light_mode_drops_sync_info() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Light, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Light, dummy_addr(), None);
 
     let actions = router.handle_event(ProtocolEvent::Message {
         peer_id: PeerId(2),
@@ -279,8 +279,8 @@ fn router_light_mode_drops_sync_info() {
 #[test]
 fn router_full_mode_forwards_sync_info() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
     let actions = router.handle_event(ProtocolEvent::Message {
         peer_id: PeerId(2),
@@ -292,8 +292,8 @@ fn router_full_mode_forwards_sync_info() {
 #[test]
 fn router_peer_disconnect_purges_state() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
     router.handle_event(ProtocolEvent::Message {
         peer_id: PeerId(1),
@@ -317,8 +317,8 @@ fn router_peer_disconnect_purges_state() {
 #[test]
 fn modifier_response_emits_validate_action() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
     // Peer 2 requests via inv route
     router.handle_event(ProtocolEvent::Message {
@@ -351,8 +351,8 @@ fn modifier_response_emits_validate_action() {
 #[test]
 fn router_modifier_request_no_inv_falls_back_to_outbound() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
     // No Inv — peer 2 requests a modifier the router has never seen
     let actions = router.handle_event(ProtocolEvent::Message {
@@ -371,8 +371,8 @@ fn router_modifier_request_no_inv_falls_back_to_outbound() {
 #[test]
 fn router_modifier_request_no_inv_no_outbound_drops() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Inbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
     // No outbound peers at all, no inv entry
     let actions = router.handle_event(ProtocolEvent::Message {
@@ -386,9 +386,9 @@ fn router_modifier_request_no_inv_no_outbound_drops() {
 #[test]
 fn router_modifier_request_with_inv_ignores_fallback() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(3), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(3), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
     // Peer 2 announces, so inv table maps to peer 2
     router.handle_event(ProtocolEvent::Message {
@@ -412,8 +412,8 @@ fn router_modifier_request_with_inv_ignores_fallback() {
 #[test]
 fn router_fallback_request_response_reaches_requester() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
     // No inv — fallback routes request to peer 1
     router.handle_event(ProtocolEvent::Message {
@@ -442,8 +442,8 @@ fn router_fallback_request_response_reaches_requester() {
 #[test]
 fn router_consumed_code_suppresses_forwarding() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
     router.register_consumed_code(76); // snapshot manifest
 
     let actions = router.handle_event(ProtocolEvent::Message {
@@ -456,8 +456,8 @@ fn router_consumed_code_suppresses_forwarding() {
 #[test]
 fn router_unregistered_code_still_forwards() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
     router.register_consumed_code(76);
 
     // Code 99 is NOT consumed — should forward normally
@@ -475,8 +475,8 @@ fn router_unregistered_code_still_forwards() {
 #[test]
 fn router_multiple_consumed_codes() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
     for code in [76, 78, 80, 90, 91] {
         router.register_consumed_code(code);
@@ -617,8 +617,8 @@ fn request_tracker_fulfill_empty() {
 #[test]
 fn router_consumed_code_boundary_values() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
     router.register_consumed_code(0);
     router.register_consumed_code(255);
@@ -653,8 +653,8 @@ fn router_consumed_code_boundary_values() {
 #[test]
 fn router_consumed_code_double_register() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
     router.register_consumed_code(76);
     router.register_consumed_code(76);
@@ -677,9 +677,9 @@ fn router_consumed_code_double_register() {
 #[test]
 fn router_consumed_code_from_outbound_suppresses() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(3), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(3), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
     router.register_consumed_code(90);
 
@@ -695,9 +695,9 @@ fn router_consumed_code_from_outbound_suppresses() {
 #[test]
 fn router_non_consumed_unknown_unaffected_by_registration() {
     let mut router = Router::new();
-    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr());
-    router.register_peer(PeerId(3), Direction::Inbound, ProxyMode::Full, dummy_addr());
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
+    router.register_peer(PeerId(3), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
 
     router.register_consumed_code(76);
     router.register_consumed_code(90);

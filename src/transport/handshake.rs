@@ -306,6 +306,24 @@ pub fn validate_peer(spec: &PeerSpec, network: &Network) -> Result<(), String> {
     Ok(())
 }
 
+impl PeerSpec {
+    /// Extract the REST API URL advertised by this peer (feature ID 4).
+    ///
+    /// JVM peers encode this as length-prefixed UTF-8 in the feature body.
+    /// Returns `None` if the feature is absent or the body is malformed.
+    pub fn rest_api_url(&self) -> Option<String> {
+        self.features.iter()
+            .find(|f| f.id == 4)
+            .and_then(|f| {
+                let body = &f.body;
+                if body.is_empty() { return None; }
+                let len = body[0] as usize;
+                if body.len() < 1 + len { return None; }
+                std::str::from_utf8(&body[1..1 + len]).ok().map(String::from)
+            })
+    }
+}
+
 /// Check if a peer's handshake indicates it is a proxy.
 pub fn is_proxy(spec: &PeerSpec) -> bool {
     spec.features.iter().any(|f| f.id == FEATURE_PROXY)
@@ -348,5 +366,50 @@ pub fn measure_size(data: &[u8]) -> io::Result<usize> {
     }
 
     Ok(cursor.position() as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_spec(features: Vec<Feature>) -> PeerSpec {
+        PeerSpec {
+            agent: "test".into(),
+            version: Version::new(5, 0, 0),
+            name: "node".into(),
+            address: None,
+            features,
+        }
+    }
+
+    #[test]
+    fn rest_api_url_valid() {
+        let url = "http://1.2.3.4:9052";
+        let mut body = vec![url.len() as u8];
+        body.extend_from_slice(url.as_bytes());
+        let spec = make_spec(vec![Feature { id: 4, body }]);
+        assert_eq!(spec.rest_api_url(), Some(url.to_string()));
+    }
+
+    #[test]
+    fn rest_api_url_empty_body() {
+        let spec = make_spec(vec![Feature { id: 4, body: vec![] }]);
+        assert_eq!(spec.rest_api_url(), None);
+    }
+
+    #[test]
+    fn rest_api_url_truncated_body() {
+        // Length byte says 20, but only 5 bytes follow
+        let mut body = vec![20];
+        body.extend_from_slice(b"short");
+        let spec = make_spec(vec![Feature { id: 4, body }]);
+        assert_eq!(spec.rest_api_url(), None);
+    }
+
+    #[test]
+    fn rest_api_url_no_feature() {
+        let spec = make_spec(vec![Feature { id: 16, body: vec![0] }]);
+        assert_eq!(spec.rest_api_url(), None);
+    }
 }
 
