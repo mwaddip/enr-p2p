@@ -30,6 +30,7 @@ pub enum Action {
         modifier_type: u8,
         id: [u8; 32],
         data: Vec<u8>,
+        peer_id: PeerId,
     },
 }
 
@@ -177,6 +178,7 @@ impl Router {
                         modifier_type,
                         id: *id,
                         data: data.clone(),
+                        peer_id: source,
                     });
                     self.latency_tracker.record_response(id);
                     if let Some(requester) = self.request_tracker.fulfill(id) {

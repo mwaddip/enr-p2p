@@ -72,7 +72,7 @@ impl P2pNode {
     /// - **Postcondition**: Background tasks are spawned and running.
     pub async fn start(
         config: Config,
-        modifier_sink: Option<mpsc::Sender<(u8, [u8; 32], Vec<u8>)>>,
+        modifier_sink: Option<mpsc::Sender<(u8, [u8; 32], Vec<u8>, Option<u64>)>>,
         mode_config: handshake::ModeConfig,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let (ver_major, ver_minor, ver_patch) = config.version_bytes()?;
@@ -277,7 +277,7 @@ async fn event_loop(
     router: Arc<Mutex<Router>>,
     peer_senders: Arc<Mutex<HashMap<PeerId, PeerSender>>>,
     subscriber: Arc<Mutex<Option<mpsc::Sender<ProtocolEvent>>>>,
-    modifier_sink: Option<mpsc::Sender<(u8, [u8; 32], Vec<u8>)>>,
+    modifier_sink: Option<mpsc::Sender<(u8, [u8; 32], Vec<u8>, Option<u64>)>>,
 ) {
     loop {
         match event_rx.recv().await {
@@ -311,12 +311,12 @@ async fn event_loop(
                                 }
                             }
                         }
-                        Action::Validate { modifier_type, id, data } => {
+                        Action::Validate { modifier_type, id, data, peer_id } => {
                             if let Some(ref sink) = modifier_sink {
                                 if modifier_type != 101 {
                                     tracing::info!(modifier_type, data_len = data.len(), "delivering non-header to pipeline");
                                 }
-                                let _ = sink.try_send((modifier_type, id, data));
+                                let _ = sink.try_send((modifier_type, id, data, Some(peer_id.0)));
                             }
                         }
                     }
