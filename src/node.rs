@@ -314,7 +314,7 @@ async fn event_loop(
                         Action::Validate { modifier_type, id, data, peer_id } => {
                             if let Some(ref sink) = modifier_sink {
                                 if modifier_type != 101 {
-                                    tracing::info!(modifier_type, data_len = data.len(), "delivering non-header to pipeline");
+                                    tracing::debug!(modifier_type, data_len = data.len(), "delivering non-header to pipeline");
                                 }
                                 let _ = sink.try_send((modifier_type, id, data, Some(peer_id.0)));
                             }

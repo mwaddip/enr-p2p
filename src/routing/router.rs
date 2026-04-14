@@ -170,7 +170,7 @@ impl Router {
 
             ProtocolMessage::ModifierResponse { modifier_type, modifiers } => {
                 if modifier_type != 101 {
-                    tracing::info!(modifier_type, count = modifiers.len(), "routing non-header ModifierResponse");
+                    tracing::debug!(modifier_type, count = modifiers.len(), "routing non-header ModifierResponse");
                 }
                 let mut actions = Vec::new();
                 for (id, data) in &modifiers {
