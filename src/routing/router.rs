@@ -117,26 +117,25 @@ impl Router {
         let source_mode = source_entry.mode;
 
         match message {
-            ProtocolMessage::Inv { modifier_type, ids } => {
+            ProtocolMessage::Inv { ids, .. } => {
+                // Record which peer has which modifier so our own
+                // ModifierRequest routing can pick a source. This is the
+                // full-node use of an incoming Inv.
+                //
+                // We do NOT relay the Inv to other peers. Relaying was
+                // leftover from the transparent-proxy origin of this crate
+                // and is protocol-incorrect for a full node: every peer
+                // talks to every other peer directly, so a relay of their
+                // announcements both duplicates traffic and — critically —
+                // can exceed the Inv size cap (v1 sync: 400 modifiers) if
+                // an upstream peer sent us an oversized Inv, getting us
+                // banned by strict peers. A full node announces its own
+                // modifiers (handled by the main crate on validate /
+                // mempool-accept), it does not forward others'.
                 for id in &ids {
                     self.inv_table.record(*id, source);
                 }
-
-                let target_direction = match source_direction {
-                    Direction::Outbound => Direction::Inbound,
-                    Direction::Inbound => Direction::Outbound,
-                };
-
-                self.peers.iter()
-                    .filter(|(pid, entry)| **pid != source && entry.direction == target_direction)
-                    .map(|(pid, _)| Action::Send {
-                        target: *pid,
-                        message: ProtocolMessage::Inv {
-                            modifier_type,
-                            ids: ids.clone(),
-                        },
-                    })
-                    .collect()
+                vec![]
             }
 
             ProtocolMessage::ModifierRequest { modifier_type, ids } => {

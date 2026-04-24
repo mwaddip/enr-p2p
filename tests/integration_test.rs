@@ -18,15 +18,17 @@ fn full_tx_relay_scenario() {
 
     let tx_id = [0x42; 32];
 
-    // Outbound announces tx
+    // Outbound announces tx — full-node semantics: router records the
+    // (id, peer) entry in its inv_table but does NOT re-broadcast the
+    // announcement. Peers are expected to talk to each other directly.
     let actions = router.handle_event(ProtocolEvent::Message {
         peer_id: outbound,
         message: ProtocolMessage::Inv { modifier_type: 2, ids: vec![tx_id] },
     });
-    assert_eq!(actions.len(), 1);
-    assert!(matches!(&actions[0], Action::Send { target, .. } if *target == inbound));
+    assert!(actions.is_empty(), "Inv must not be relayed to other peers");
 
-    // Inbound requests it
+    // A request for the same tx from the inbound side still resolves via
+    // the inv_table to the source peer — the record path stays intact.
     let actions = router.handle_event(ProtocolEvent::Message {
         peer_id: inbound,
         message: ProtocolMessage::ModifierRequest { modifier_type: 2, ids: vec![tx_id] },
@@ -34,7 +36,8 @@ fn full_tx_relay_scenario() {
     assert_eq!(actions.len(), 1);
     assert!(matches!(&actions[0], Action::Send { target, .. } if *target == outbound));
 
-    // Outbound delivers
+    // Outbound delivers — ModifierResponse still fans Validate + the
+    // forwarded copy to the original requester (tracked by request_tracker).
     let actions = router.handle_event(ProtocolEvent::Message {
         peer_id: outbound,
         message: ProtocolMessage::ModifierResponse {
@@ -80,7 +83,13 @@ fn disconnect_cleanup_scenario() {
 }
 
 #[test]
-fn inv_fanout_scenario() {
+fn inv_does_not_fanout() {
+    // Full-node semantics: receiving an Inv updates the router's inv_table
+    // so that subsequent ModifierRequests can be routed to the announcing
+    // peer, but the Inv itself is NOT relayed to any other peer. Relaying
+    // was leftover from the transparent-proxy origin of this crate and
+    // is protocol-incorrect for a full node (peers announce to each other
+    // directly, and relayed Invs can exceed the 400-modifier cap).
     let mut router = Router::new();
     let outbound = PeerId(1);
     router.register_peer(outbound, Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
@@ -89,12 +98,22 @@ fn inv_fanout_scenario() {
         router.register_peer(PeerId(i), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
     }
 
+    let tx_id = [0xaa; 32];
     let actions = router.handle_event(ProtocolEvent::Message {
         peer_id: outbound,
-        message: ProtocolMessage::Inv { modifier_type: 2, ids: vec![[0xaa; 32]] },
+        message: ProtocolMessage::Inv { modifier_type: 2, ids: vec![tx_id] },
     });
 
-    assert_eq!(actions.len(), 4);
+    assert!(actions.is_empty(), "Inv must not fanout to other peers");
+
+    // Inv was recorded — an inbound ModifierRequest for this tx still
+    // routes to the announcing outbound peer via the inv_table lookup.
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(2),
+        message: ProtocolMessage::ModifierRequest { modifier_type: 2, ids: vec![tx_id] },
+    });
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(&actions[0], Action::Send { target, .. } if *target == outbound));
 }
 
 #[test]

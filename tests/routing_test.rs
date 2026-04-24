@@ -174,7 +174,10 @@ use enr_p2p::protocol::peer::ProtocolEvent;
 use enr_p2p::types::{Direction, ProxyMode};
 
 #[test]
-fn router_inv_from_outbound_forwards_to_inbound() {
+fn router_inv_from_outbound_does_not_forward() {
+    // Full-node semantics: Inv updates inv_table for our own request
+    // routing, but is NOT relayed to other peers. See `router.rs` for
+    // the reasoning (proxy-origin leftover, oversized-relay ban risk).
     let mut router = Router::new();
     router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full, dummy_addr(), None);
     router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full, dummy_addr(), None);
@@ -186,13 +189,7 @@ fn router_inv_from_outbound_forwards_to_inbound() {
     };
 
     let actions = router.handle_event(event);
-    let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
-        Action::Send { target, .. } => Some(*target),
-        _ => None,
-    }).collect();
-    assert!(targets.contains(&PeerId(2)));
-    assert!(targets.contains(&PeerId(3)));
-    assert!(!targets.contains(&PeerId(1)));
+    assert!(actions.is_empty(), "Inv must not be forwarded to any peer");
 }
 
 #[test]
