@@ -52,6 +52,12 @@ pub struct Router {
     consumed_codes: HashSet<u8>,
 }
 
+impl Default for Router {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Router {
     pub fn new() -> Self {
         Self {

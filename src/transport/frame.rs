@@ -160,7 +160,7 @@ pub async fn read_frame(
     reader.read_exact(&mut body).await?;
 
     let hash = Blake2b256::digest(&body);
-    if &hash[..4] != checksum {
+    if hash[..4] != checksum {
         tracing::error!(
             code = code,
             body_len = body_len,

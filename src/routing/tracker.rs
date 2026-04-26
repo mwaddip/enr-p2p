@@ -28,6 +28,12 @@ pub struct RequestTracker {
     max_pending: usize,
 }
 
+impl Default for RequestTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RequestTracker {
     pub fn new() -> Self {
         Self { pending: HashMap::new(), max_pending: MAX_PENDING }
@@ -39,6 +45,10 @@ impl RequestTracker {
 
     pub fn len(&self) -> usize {
         self.pending.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty()
     }
 
     pub fn record(&mut self, modifier_id: ModifierId, requester: PeerId) {
@@ -81,6 +91,12 @@ impl RequestTracker {
 pub struct SyncTracker {
     inbound_to_outbound: HashMap<PeerId, PeerId>,
     outbound_to_inbound: HashMap<PeerId, PeerId>,
+}
+
+impl Default for SyncTracker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SyncTracker {

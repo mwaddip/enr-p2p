@@ -41,6 +41,12 @@ pub struct LatencyStats {
     pub peer_count: usize,
 }
 
+impl Default for LatencyTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LatencyTracker {
     pub fn new() -> Self {
         Self {

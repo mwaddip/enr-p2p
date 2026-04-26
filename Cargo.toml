@@ -9,7 +9,6 @@ blake2 = { version = "0.10", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 igd-next = { version = "0.17", features = ["aio_tokio"] }
 if-addrs = "0.15"
 

@@ -15,6 +15,14 @@ use crate::transport::vlq;
 use crate::types::ModifierId;
 use std::io::{self, Cursor, Read};
 
+/// Hard cap on object counts in INV / ModifierRequest / ModifierResponse
+/// messages. Mirrors JVM `InvSpec.maxInvObjects = 400` (a `require` that
+/// throws on parse). Bounds pre-allocation: a hostile peer cannot drive
+/// `Vec::with_capacity` beyond this without us rejecting the frame first.
+const MAX_INV_OBJECTS: usize = 400;
+
+type ModifierEntries = Vec<(ModifierId, Vec<u8>)>;
+
 /// Well-known message codes.
 pub struct MessageCode;
 
@@ -102,6 +110,12 @@ fn parse_inv_body(data: &[u8]) -> io::Result<(u8, Vec<ModifierId>)> {
     let mut type_byte = [0u8; 1];
     cursor.read_exact(&mut type_byte)?;
     let count = vlq::read_vlq_length(&mut cursor)?;
+    if count > MAX_INV_OBJECTS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("INV/Request count {count} exceeds cap {MAX_INV_OBJECTS}"),
+        ));
+    }
     let mut ids = Vec::with_capacity(count);
     for _ in 0..count {
         let mut id = [0u8; 32];
@@ -121,16 +135,38 @@ fn encode_inv_body(modifier_type: u8, ids: &[ModifierId]) -> Vec<u8> {
     body
 }
 
-fn parse_modifier_response_body(data: &[u8]) -> io::Result<(u8, Vec<(ModifierId, Vec<u8>)>)> {
+fn parse_modifier_response_body(data: &[u8]) -> io::Result<(u8, ModifierEntries)> {
+    let body_size = data.len();
     let mut cursor = Cursor::new(data);
     let mut type_byte = [0u8; 1];
     cursor.read_exact(&mut type_byte)?;
     let count = vlq::read_vlq_length(&mut cursor)?;
+    if count > MAX_INV_OBJECTS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("ModifierResponse count {count} exceeds cap {MAX_INV_OBJECTS}"),
+        ));
+    }
     let mut modifiers = Vec::with_capacity(count);
+    let mut allocated = 0usize;
     for _ in 0..count {
         let mut id = [0u8; 32];
         cursor.read_exact(&mut id)?;
         let data_len = vlq::read_vlq_length(&mut cursor)?;
+        // Sum of declared payload sizes cannot exceed the frame body.
+        // The frame layer caps body at 2 MB; a hostile peer can still
+        // declare a per-mod data_len up to the VLQ cap (also 2 MB), so
+        // without this check N small mods × 2 MB each compounds beyond
+        // what the frame ever delivered.
+        allocated = allocated.saturating_add(data_len);
+        if allocated > body_size {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "ModifierResponse declared payload {allocated} exceeds frame body {body_size}"
+                ),
+            ));
+        }
         let mut mod_data = vec![0u8; data_len];
         cursor.read_exact(&mut mod_data)?;
         modifiers.push((id, mod_data));
@@ -148,4 +184,54 @@ fn encode_modifier_response_body(modifier_type: u8, modifiers: &[(ModifierId, Ve
         body.extend_from_slice(data);
     }
     body
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_inv_body_rejects_count_above_cap() {
+        // Body: type(1) + VLQ(MAX_INV_OBJECTS + 1). No IDs follow — the
+        // cap rejection must fire before any ID-shaped allocation.
+        let mut body = vec![1u8];
+        vlq::write_vlq(&mut body, (MAX_INV_OBJECTS as u64) + 1);
+        let err = parse_inv_body(&body).expect_err("oversized count must error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn parse_inv_body_accepts_count_at_cap() {
+        // Hand-roll a valid INV at exactly the cap.
+        let mut body = vec![1u8];
+        vlq::write_vlq(&mut body, MAX_INV_OBJECTS as u64);
+        body.extend_from_slice(&[0u8; 32 * MAX_INV_OBJECTS]);
+        let (type_id, ids) = parse_inv_body(&body).expect("at-cap count must parse");
+        assert_eq!(type_id, 1);
+        assert_eq!(ids.len(), MAX_INV_OBJECTS);
+    }
+
+    #[test]
+    fn parse_modifier_response_body_rejects_count_above_cap() {
+        let mut body = vec![1u8];
+        vlq::write_vlq(&mut body, (MAX_INV_OBJECTS as u64) + 1);
+        let err = parse_modifier_response_body(&body)
+            .expect_err("oversized count must error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn parse_modifier_response_body_rejects_payload_exceeding_body() {
+        // Declare 1 modifier with data_len greater than the bytes that
+        // actually fit in the (declared) body. The check must fire before
+        // we allocate `vec![0u8; data_len]`.
+        let mut body = vec![1u8];
+        vlq::write_vlq(&mut body, 1);              // count = 1
+        body.extend_from_slice(&[0u8; 32]);        // modifier id
+        vlq::write_vlq(&mut body, 1_000_000);      // declared data_len
+        // body length is far smaller than 1_000_000 — must reject.
+        let err = parse_modifier_response_body(&body)
+            .expect_err("oversized declared payload must error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
 }

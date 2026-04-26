@@ -22,6 +22,12 @@ pub struct InvTable {
     entries: HashMap<ModifierId, PeerId>,
 }
 
+impl Default for InvTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InvTable {
     pub fn new() -> Self {
         Self { entries: HashMap::new() }
